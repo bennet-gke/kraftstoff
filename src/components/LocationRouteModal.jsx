@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { MapPin, Navigation, Plus, Trash2, X, Check, Target, Compass, Download, Cloud, Search, LocateFixed, Eye } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MapPin, Navigation, Plus, Trash2, X, Check, Target, Compass, Download, Cloud, Search, LocateFixed, Eye, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { locationService } from '../services/locationService';
 import { routeService } from '../services/routeService';
 import { backupService } from '../services/backupService';
@@ -40,7 +40,19 @@ export default function LocationRouteModal({
   const [isCalculatingOsm, setIsCalculatingOsm] = useState(false);
   const [osmRoutePreview, setOsmRoutePreview] = useState(null);
   const [autoSyncICloud, setAutoSyncICloud] = useState(true);
-  const [routeToast, setRouteToast] = useState(null);
+  const [routeToast, setRouteToast] = useState(null); // { type: 'success' | 'error', message: string }
+
+  // Stelle sicher, dass startType & endType stets mit den tatsächlich vorhandenen Orten übereinstimmen
+  useEffect(() => {
+    if (locations && locations.length > 0) {
+      if (startType !== 'custom' && !locations.some((l) => l.id === startType)) {
+        setStartType(locations[0].id);
+      }
+      if (endType !== 'custom' && !locations.some((l) => l.id === endType)) {
+        setEndType(locations[1]?.id || locations[0].id);
+      }
+    }
+  }, [locations, startType, endType]);
 
   if (!isOpen) return null;
 
@@ -182,20 +194,88 @@ export default function LocationRouteModal({
     }
   };
 
-  // 4. Start & Zielkoordinaten für Route ermitteln
-  const resolveCoordsForRoute = async (type, customQuery) => {
-    if (type !== 'custom') {
-      const loc = locations.find((l) => l.id === type);
-      if (loc) return { name: loc.name, lat: loc.lat, lng: loc.lng };
+  // 4. Start & Zielkoordinaten für Route ermitteln (robust & fehlertolerant)
+  const resolveCoordsForRoute = async (type, customQuery = '') => {
+    // 1. Suche in gespeicherten Standorten nach ID oder Name
+    if (type && type !== 'custom') {
+      let loc = locations.find((l) => l.id === type);
+      if (!loc) {
+        loc = locations.find((l) => l.name === type || l.name?.toLowerCase() === type?.toLowerCase());
+      }
+      if (loc && loc.lat != null && loc.lng != null) {
+        const lat = parseFloat(loc.lat);
+        const lng = parseFloat(loc.lng);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          return { name: loc.name, lat, lng };
+        }
+      }
     }
-    if (customQuery.trim()) {
-      const geo = await locationService.geocodeAddress(customQuery);
-      if (geo) return { name: customQuery, lat: geo.lat, lng: geo.lng };
+
+    // 2. Benutzerdefinierte Adresse auflösen
+    const query = (customQuery || (type === 'custom' ? '' : type) || '').trim();
+    if (query) {
+      const geo = await locationService.geocodeAddress(query);
+      if (geo && geo.lat != null && geo.lng != null) {
+        return { name: query, lat: parseFloat(geo.lat), lng: parseFloat(geo.lng) };
+      }
     }
+
+    // 3. Fallback: Erstbeste Location falls vorhanden
+    if (locations && locations.length > 0) {
+      const fallback = locations.find((l) => !isNaN(parseFloat(l.lat)) && !isNaN(parseFloat(l.lng))) || locations[0];
+      if (fallback && fallback.lat != null && fallback.lng != null) {
+        return { name: fallback.name, lat: parseFloat(fallback.lat), lng: parseFloat(fallback.lng) };
+      }
+    }
+
     return null;
   };
 
-  // 5. OSM Route live vorab berechnen
+  // 5. Automatische OSM-Streckenberechnung im Hintergrund bei jeder Ortsauswahl
+  useEffect(() => {
+    if (modalTab !== 'routes') return;
+    let isCancelled = false;
+
+    const autoCalculateRoute = async () => {
+      const start = await resolveCoordsForRoute(startType, customStartQuery);
+      const end = await resolveCoordsForRoute(endType, customEndQuery);
+
+      if (!start || !end) return;
+
+      // Routennamen automatisch passend vorschlagen, falls noch leer oder Standard
+      if (!newRouteName.trim() || newRouteName.includes(' - ') || newRouteName.includes(' ➔ ')) {
+        setNewRouteName(`${start.name} - ${end.name}`);
+      }
+
+      setIsCalculatingOsm(true);
+      try {
+        const res = await routeService.calculateOsmRoute(start, end);
+        if (!isCancelled && res.success) {
+          setOsmRoutePreview({
+            startName: start.name,
+            endName: end.name,
+            distanceKm: res.distanceKm,
+            durationMin: res.durationMin,
+            waypointsCount: res.waypoints?.length || 0,
+            result: res,
+          });
+          setRouteToast(null);
+        }
+      } catch (err) {
+        console.warn('Auto route preview calculation notice:', err);
+      } finally {
+        if (!isCancelled) setIsCalculatingOsm(false);
+      }
+    };
+
+    const timer = setTimeout(autoCalculateRoute, 200);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [modalTab, startType, endType, customStartQuery, customEndQuery, locations]);
+
+  // 6. Manuelle OSM Route Neuberechnung (Refresh)
   const handlePreviewOsmRoute = async () => {
     setIsCalculatingOsm(true);
     setRouteToast(null);
@@ -204,7 +284,7 @@ export default function LocationRouteModal({
       const end = await resolveCoordsForRoute(endType, customEndQuery);
 
       if (!start || !end) {
-        setRouteToast('Bitte gültigen Start- und Zielort angeben.');
+        setRouteToast({ type: 'error', message: 'Bitte gültigen Start- und Zielort angeben.' });
         setIsCalculatingOsm(false);
         return;
       }
@@ -218,18 +298,20 @@ export default function LocationRouteModal({
         waypointsCount: res.waypoints?.length || 0,
         result: res,
       });
-      setRouteToast(`✓ OSM Route berechnet: ${res.distanceKm} km (ca. ${res.durationMin} Min. Fahrzeit)`);
+      setRouteToast({
+        type: 'success',
+        message: `✓ OSM Route berechnet: ${res.distanceKm} km (ca. ${res.durationMin} Min. Fahrzeit)`,
+      });
     } catch (e) {
-      setRouteToast(`Fehler bei OSM-Berechnung: ${e.message}`);
+      setRouteToast({ type: 'error', message: `Fehler bei OSM-Berechnung: ${e.message}` });
     } finally {
       setIsCalculatingOsm(false);
     }
   };
 
-  // 6. Route speichern
+  // 7. Route speichern
   const handleAddRoute = async (e) => {
     e.preventDefault();
-    if (!newRouteName.trim()) return;
 
     setIsCalculatingOsm(true);
     setRouteToast(null);
@@ -239,19 +321,30 @@ export default function LocationRouteModal({
       const end = await resolveCoordsForRoute(endType, customEndQuery);
 
       if (!start || !end) {
-        setRouteToast('Fehler: Start- oder Zielkoordinaten konnten nicht aufgelöst werden.');
+        setRouteToast({ type: 'error', message: 'Fehler: Start- oder Zielkoordinaten konnten nicht aufgelöst werden.' });
         setIsCalculatingOsm(false);
         return;
       }
 
+      const routeName = newRouteName.trim() || `${start.name} - ${end.name}`;
+
+      // Verwende bereits vorab berechnete Route oder berechne sie jetzt
+      let osrm = osmRoutePreview?.result;
+      if (!osrm || osmRoutePreview.startName !== start.name || osmRoutePreview.endName !== end.name) {
+        osrm = await routeService.calculateOsmRoute(start, end);
+      }
+
       const newR = await routeService.addRoute({
-        name: newRouteName,
-        description: newRouteDesc || `${start.name} ➔ ${end.name}`,
+        name: routeName,
+        description: newRouteDesc.trim() || `${start.name} ➔ ${end.name} (${osrm.distanceKm} km)`,
         startName: start.name,
         startCoords: { lat: start.lat, lng: start.lng },
         endName: end.name,
         endCoords: { lat: end.lat, lng: end.lng },
+        totalDistanceKm: osrm.distanceKm,
         corridorRadiusKm: parseFloat(newRouteCorridor) || 2.5,
+        waypoints: osrm.waypoints,
+        polylineCoords: osrm.polylineCoords,
       });
 
       onUpdateRoutes(routeService.routes);
@@ -264,22 +357,23 @@ export default function LocationRouteModal({
         setTimeout(async () => {
           try {
             const res = await backupService.directSyncToICloud();
-            setRouteToast(
-              res.method === 'direct-file'
-                ? `✓ Route "${newR.name}" gespeichert & in iCloud Drive gesichert!`
-                : `✓ Route "${newR.name}" gespeichert!`
-            );
+            setRouteToast({
+              type: 'success',
+              message: res.method === 'direct-file'
+                ? `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) gespeichert & in iCloud Drive gesichert!`
+                : `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) gespeichert!`,
+            });
           } catch {
-            setRouteToast(`✓ Route "${newR.name}" lokal gespeichert!`);
+            setRouteToast({ type: 'success', message: `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) lokal gespeichert!` });
           }
-          setTimeout(() => setRouteToast(null), 4000);
+          setTimeout(() => setRouteToast(null), 5000);
         }, 150);
       } else {
-        setRouteToast(`✓ Route "${newR.name}" erfolgreich angelegt!`);
-        setTimeout(() => setRouteToast(null), 4000);
+        setRouteToast({ type: 'success', message: `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) erfolgreich angelegt!` });
+        setTimeout(() => setRouteToast(null), 5000);
       }
     } catch (err) {
-      setRouteToast(`Fehler beim Speichern der Route: ${err.message}`);
+      setRouteToast({ type: 'error', message: `Fehler beim Speichern der Route: ${err.message}` });
     } finally {
       setIsCalculatingOsm(false);
     }
@@ -821,57 +915,80 @@ export default function LocationRouteModal({
                 </div>
               </div>
 
-              {/* OSM Vorschau & Test-Button */}
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.65rem' }}>
-                <button
-                  type="button"
-                  onClick={handlePreviewOsmRoute}
-                  disabled={isCalculatingOsm}
-                  className="btn btn-secondary btn-sm"
-                  style={{ flex: 1, fontSize: '0.75rem' }}
-                >
-                  <Eye size={13} />
-                  <span>{isCalculatingOsm ? 'Berechne OSM-Strecke...' : 'OSM-Strecke vorab berechnen'}</span>
-                </button>
-              </div>
-
-              {osmRoutePreview && (
-                <div style={{
-                  marginBottom: '0.65rem',
-                  padding: '0.6rem 0.75rem',
-                  borderRadius: '6px',
-                  fontSize: '0.75rem',
-                  background: '#EFF6FF',
-                  border: '1px solid #BFDBFE',
-                  color: '#1E40AF',
-                }}>
-                  <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>
-                    OSM Straßenroute berechnet:
-                  </div>
-                  <div>Strecke: <strong>{osmRoutePreview.distanceKm} km</strong> • Fahrzeit: <strong>~{osmRoutePreview.durationMin} Min.</strong> ({osmRoutePreview.waypointsCount} Koordinaten-Segmente)</div>
+              {/* Live OSM-Streckenanzeige (Automatische Berechnung) */}
+              {isCalculatingOsm && !osmRoutePreview && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.5rem 0.65rem', marginBottom: '0.65rem', background: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.74rem', color: '#0284C7' }}>
+                  <RefreshCw size={13} className="animate-spin" />
+                  <span>Berechne OSM-Fahrstrecke und Fahrzeit automatisch...</span>
                 </div>
               )}
 
+              {osmRoutePreview && (
+                <div
+                  style={{
+                    background: '#F0FDF4',
+                    border: '1px solid #BBF7D0',
+                    borderRadius: '8px',
+                    padding: '0.75rem 0.85rem',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#166534', fontWeight: 700, fontSize: '0.8rem' }}>
+                      <CheckCircle2 size={15} color="#16A34A" />
+                      <span>OSM-Strecke automatisch berechnet</span>
+                    </div>
+                    <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: 600 }}>
+                      ±{newRouteCorridor} km Korridor
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.25rem' }}>
+                    <div>
+                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrstrecke:</span>
+                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>{osmRoutePreview.distanceKm} km</strong>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrzeit:</span>
+                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>~{osmRoutePreview.durationMin} Min.</strong>
+                    </div>
+                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>OSM-Punkte:</span>
+                      <span className="num-mono" style={{ fontSize: '0.82rem', color: '#334155' }}>{osmRoutePreview.waypointsCount} Segmente</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Feedback Toast */}
               {routeToast && (
                 <div
                   style={{
                     marginBottom: '0.65rem',
-                    padding: '0.45rem 0.65rem',
+                    padding: '0.5rem 0.75rem',
                     borderRadius: '6px',
-                    fontSize: '0.74rem',
-                    background: '#ECFDF5',
-                    color: '#065F46',
-                    border: '1px solid #A7F3D0',
+                    fontSize: '0.75rem',
+                    background: (routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#FEF2F2' : '#ECFDF5',
+                    color: (routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#991B1B' : '#065F46',
+                    border: `1px solid ${(routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#FECACA' : '#A7F3D0'}`,
                     fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
                   }}
                 >
-                  {routeToast}
+                  {(routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? (
+                    <AlertCircle size={14} color="#DC2626" />
+                  ) : (
+                    <CheckCircle2 size={14} color="#16A34A" />
+                  )}
+                  <span>{routeToast.message || routeToast}</span>
                 </div>
               )}
 
-              <button type="submit" className="btn btn-primary btn-sm" style={{ width: '100%' }} disabled={isCalculatingOsm}>
-                <Plus size={14} />
-                <span>{isCalculatingOsm ? 'Erstelle Route per OSM...' : 'Route berechnen & in iCloud sichern'}</span>
+              <button type="submit" className="btn btn-primary btn-sm" style={{ width: '100%', padding: '0.6rem' }} disabled={isCalculatingOsm}>
+                <Plus size={15} />
+                <span>{isCalculatingOsm ? 'Berechne Route...' : 'Route speichern & aktivieren'}</span>
               </button>
             </form>
           </div>
