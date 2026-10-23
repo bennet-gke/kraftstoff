@@ -111,31 +111,43 @@ export const INITIAL_STATIONS = [
   },
 ];
 
-// Gesetzliche & steuerliche Konfigurationsobjekte nach Spezifikation Seite 3
+// Markt- und Verordnungsregeln für das ML-Modell & Prognose-Fahrpläne
 export const INITIAL_LAWS_TAXES = [
   {
-    id: 'law-tankrabatt',
-    key: 'tankrabatt_temporaer',
-    label: 'Temporärer Bundes-Tankrabatt',
-    discountCent: -14.0,
-    isActive: false,
-    description: 'Staatliche temporäre Entlastung zur Senkung der Energiesteuer auf Kraftstoffe.',
-  },
-  {
-    id: 'law-co2',
-    key: 'co2_preisanpassung',
-    label: 'CO2-Abgabe Stufe 2026',
-    discountCent: 4.5,
+    id: 'rule-12-clock',
+    key: 'twelve_clock_regulation',
+    label: '12-Uhr-Regelung (Spritpreis-Verordnung)',
+    category: 'Preissprung-Schutz',
     isActive: true,
-    description: 'Gesetzlich verankerte CO2-Preiskomponente pro Liter Kraftstoff.',
+    impact: 'Preiserhöhungen nur bis 12:00 Uhr erlaubt. Nach 12:00 Uhr nur Senkungen!',
+    description: 'Die bewährte Marktregel (Österreich & Bundeskartellamt-Forderung): Nach 12:00 Uhr mittags sind Preiserhöhungen gesetzlich untersagt. Das ML-Modell prognostiziert ab 12:00 Uhr verlässlich fallende oder stabile Preise bis zum Tagestiefststand am Abend.',
   },
   {
-    id: 'law-pendler',
-    key: 'pendler_bonus',
-    label: 'Regionale Pendler-Entlastung',
-    discountCent: -2.5,
+    id: 'rule-mtsk-transparency',
+    key: 'mtsk_reporting_cycle',
+    label: 'MTS-K Kartellamt-Meldepflicht (5-Minuten-Takt)',
+    category: 'Markttransparenzstelle',
+    isActive: true,
+    impact: 'Echtzeit-Erkennung von Preisänderungen & Reaktionsfenstern',
+    description: 'Gesetzliche Pflicht zur Meldung aller Preisänderungen innerhalb von 5 Minuten an das Bundeskartellamt. Das ML-Modell nutzt diesen Takt für das Brand-Leader Reaktionsradar.',
+  },
+  {
+    id: 'rule-night-surcharge',
+    key: 'night_pricing_cycle',
+    label: 'Nachtpreiskurve & Wochenend-Muster',
+    category: 'MTS-K Zyklen',
+    isActive: true,
+    impact: 'Nachtzuschlag ab 22:00 Uhr & günstiges Sonntagnachmittag/Dienstag-Fenster',
+    description: 'Berücksichtigt den kartellamtlich dokumentierten Nachtaufschlag zwischen 22:00 und 06:00 Uhr sowie das typische Tief am Sonntagnachmittag und Dienstagabend.',
+  },
+  {
+    id: 'rule-commute-rushhour',
+    key: 'commute_peak_smoothing',
+    label: 'Berufsverkehr Rushhour Peak-Filter',
+    category: 'Pendler-Dynamik',
     isActive: false,
-    description: 'Sonderrabatt für zertifizierte Arbeitspendler während der Kern-Rushhour.',
+    impact: 'Dämpft künstliche Morgenspitzen (07:00 - 08:30 Uhr)',
+    description: 'Kompensiert vorübergehende künstliche Preistreiber während der morgendlichen Berufsverkehrsspitzen.',
   },
 ];
 
@@ -412,9 +424,15 @@ class DataService {
   }
 
   getActiveTaxReliefCent() {
-    return this.lawsTaxes
-      .filter((law) => law.isActive)
-      .reduce((sum, law) => sum + (law.discountCent || 0), 0);
+    return 0; // Keine künstlichen Preisverzerrungen an Zapfsäulenpreisen!
+  }
+
+  isTwelveClockRuleActive() {
+    return this.lawsTaxes.some((r) => r.key === 'twelve_clock_regulation' && r.isActive);
+  }
+
+  getActiveMarketRulesCount() {
+    return this.lawsTaxes.filter((r) => r.isActive).length;
   }
 
   async testTankerkoenig(key, lat = 50.9375, lng = 6.9603) {
@@ -516,8 +534,8 @@ class DataService {
       const latestPoint = history[history.length - 1];
       const baseCurrentPrice = station.livePrice || (latestPoint ? latestPoint.price : 1.699);
       
-      // Gesetzliche Modifikation einrechnen
-      const effectiveCurrentPrice = parseFloat((baseCurrentPrice + (activeReliefCent / 100)).toFixed(3));
+      // Echter, unverfälschter Zapfsäulenpreis (keine künstlichen cent-Abzüge!)
+      const effectiveCurrentPrice = baseCurrentPrice;
 
       return {
         ...station,

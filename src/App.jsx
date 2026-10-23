@@ -258,7 +258,8 @@ export default function App() {
   const activeVehicle = vehicles.find((v) => v.id === activeVehicleId) || vehicles[0];
   const activeLocation = locations.find((l) => l.id === activeLocationId) || locations[0];
   const activeRoute = routes.find((r) => r.id === activeRouteId) || null;
-  const activeTaxReliefCent = dataService.getActiveTaxReliefCent();
+  const activeTaxReliefCent = 0; // 100% reale Zapfsäulenpreise ohne künstliche Verzerrungen
+  const isTwelveClockActive = laws.some((l) => (l.key === 'twelve_clock_regulation' || l.id === 'rule-12-clock') && l.isActive);
 
   // Kraftstoffart wechseln
   const handleSelectFuel = (fuel) => {
@@ -266,7 +267,7 @@ export default function App() {
     loadData(fuel);
   };
 
-  // Gesetze updaten
+  // Gesetze / Marktregeln updaten
   const handleUpdateLaws = (updatedLaws) => {
     const saved = dataService.saveLaws(updatedLaws);
     setLaws([...saved]);
@@ -385,7 +386,7 @@ export default function App() {
         currentPrice: st.currentPrice,
         history: st.history,
         thresholdCent: thresholdEuro,
-        taxReliefCent: activeTaxReliefCent,
+        taxReliefCent: 0,
       });
 
       const mlPrediction = predictPriceScore({
@@ -394,7 +395,7 @@ export default function App() {
         hourOfDay: now.getHours(),
         currentPrice: st.currentPrice,
         dynAverage: evaluation.effectiveDynAverage,
-        lawFlag: activeTaxReliefCent !== 0 ? 1 : 0,
+        twelveClockActive: isTwelveClockActive,
       });
 
       const detour = calculateDetourProfitability({
@@ -416,7 +417,7 @@ export default function App() {
         detour,
       };
     });
-  }, [routeFilteredStations, settings.alertThresholdCent, activeTaxReliefCent, activeVehicle, baseStation, detourMode, customLiters, customConsumption]);
+  }, [routeFilteredStations, settings.alertThresholdCent, isTwelveClockActive, activeVehicle, baseStation, detourMode, customLiters, customConsumption]);
 
   // 5. Sortierung
   const sortedStations = useMemo(() => {
@@ -521,15 +522,15 @@ export default function App() {
               <MapPin size={16} color="#0F172A" />
             </button>
 
-            {/* Gesetze & Steuern Icon */}
+            {/* Marktregeln & 12-Uhr-Verordnung Icon */}
             <button
               className="btn btn-secondary btn-sm"
               onClick={() => setIsLawModalOpen(true)}
-              title="Gesetze & Steuern anpassen"
+              title="Marktregeln & 12-Uhr-Verordnung anpassen"
               style={{ position: 'relative', padding: '0.45rem' }}
             >
               <Scale size={16} color="#0F172A" />
-              {activeTaxReliefCent !== 0 && (
+              {isTwelveClockActive && (
                 <span
                   style={{
                     position: 'absolute',
@@ -540,6 +541,7 @@ export default function App() {
                     borderRadius: '50%',
                     background: '#059669',
                   }}
+                  title="12-Uhr-Spritpreisverordnung aktiv"
                 />
               )}
             </button>
@@ -726,36 +728,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Aktiver Gesetzes-Hinweis */}
-        {activeTaxReliefCent !== 0 && (
-          <div
-            style={{
-              background: activeTaxReliefCent < 0 ? '#ECFDF5' : '#FFF1F2',
-              border: `1px solid ${activeTaxReliefCent < 0 ? '#A7F3D0' : '#FECDD3'}`,
-              borderRadius: '8px',
-              padding: '0.55rem 0.9rem',
-              marginBottom: '1rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontSize: '0.78rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-              <Scale size={14} color={activeTaxReliefCent < 0 ? '#059669' : '#DC2626'} />
-              <span>
-                <strong>Gesetzliche Regelung aktiv:</strong> Netto{' '}
-                {activeTaxReliefCent > 0 ? `+${activeTaxReliefCent.toFixed(1)}` : activeTaxReliefCent.toFixed(1)} ct/L auf alle Preise.
-              </span>
-            </div>
-            <button
-              onClick={() => setIsLawModalOpen(true)}
-              style={{ background: 'none', border: 'none', color: '#0F172A', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
-            >
-              Anpassen
-            </button>
-          </div>
-        )}
+
 
         {/* Steuerungsleiste: Fahrzeug, Standort/Radius, Route, Sorte, Heimweg */}
         <RouteScheduleBar
@@ -1043,6 +1016,7 @@ export default function App() {
             stations={evaluatedStations}
             activeVehicle={activeVehicle}
             activeLawsCount={laws.filter((l) => l.isActive).length}
+            isTwelveClockActive={isTwelveClockActive}
           />
         )}
 

@@ -77,6 +77,12 @@ export function buildModel() {
 
 /**
  * Normalisiert die 6 Input-Features in den Wertebereich [0, 1].
+ * Feature 6 repräsentiert die gesetzliche 12-Uhr-Regelung (Spritpreisverordnung):
+ * - Bei aktiver 12-Uhr-Regel:
+ *   - Nach 12:00 Uhr (12:00 - 21:59): Preiserhöhungsschutz aktiv! (Wert = 1.0)
+ *   - Vor 12:00 Uhr (06:00 - 11:59): Erhöhungsrisiko um 12:00 Uhr droht (Wert = 0.5)
+ *   - Nacht (22:00 - 05:59): Nachtphase (Wert = 0.2)
+ * - Bei inaktiver Regel: 0.0
  */
 export function extractFeatures({
   stationId = 'default',
@@ -84,7 +90,8 @@ export function extractFeatures({
   hourOfDay = new Date().getHours(),
   currentPrice = 1.75,
   dynAverage = 1.75,
-  lawFlag = 0,
+  twelveClockActive = true,
+  lawFlag = 1,
 }) {
   // 1. Hash der Tankstellen-ID (0 bis 1)
   let hash = 0;
@@ -106,14 +113,25 @@ export function extractFeatures({
   // 5. Dyn. Durchschnitt
   const dynAvgNorm = Math.min(1, Math.max(0, (dynAverage - 1.30) / 1.00));
 
-  // 6. Gesetzes-Flag (0 oder 1)
-  const lawNorm = lawFlag ? 1 : 0;
+  // 6. 12-Uhr-Regelung Preisschutzfaktor (0.0 bis 1.0)
+  const isProtected = twelveClockActive !== undefined ? !!twelveClockActive : !!lawFlag;
+  let ruleFeature = 0.0;
+  if (isProtected) {
+    if (hourOfDay >= 12 && hourOfDay <= 21) {
+      ruleFeature = 1.0; // Absoluter Preiserhöhungsschutz ab 12 Uhr
+    } else if (hourOfDay >= 6 && hourOfDay < 12) {
+      ruleFeature = 0.5; // Vor 12 Uhr: Vorsicht vor 12-Uhr-Sprung
+    } else {
+      ruleFeature = 0.2; // Nachtphase
+    }
+  }
 
-  return [stationNorm, dayNorm, hourNorm, priceNorm, dynAvgNorm, lawNorm];
+  return [stationNorm, dayNorm, hourNorm, priceNorm, dynAvgNorm, ruleFeature];
 }
 
 /**
- * Synthetische Trainingsdaten basierend auf typischen deutschen Kraftstoffzyklen.
+ * Synthetische Trainingsdaten basierend auf typischen deutschen Kraftstoffzyklen
+ * und der 12-Uhr-Spritpreisverordnung.
  */
 export function generateTrainingDataset(numSamples = 160) {
   const xs = [];
@@ -123,30 +141,37 @@ export function generateTrainingDataset(numSamples = 160) {
     const day = Math.floor(Math.random() * 7);
     const hour = Math.floor(Math.random() * 24);
     const basePrice = 1.68 + Math.random() * 0.15;
+    const isTwelveClockActive = Math.random() > 0.3; // Meist aktiv
     
-    // Intraday pattern
+    // Intraday pattern unter Berücksichtigung der 12-Uhr-Regelung:
+    // Vor 12:00 Uhr: Morgenspitze & Volatilität
+    // Nach 12:00 Uhr: Preiserhöhungsverbot! Kontinuierlicher Abwärtstrend zum Abend
     let timeShift = 0;
-    if (hour >= 6 && hour <= 8) {
-      timeShift = +0.07; // Teurer Morgenschub
+    if (hour >= 6 && hour < 12) {
+      timeShift = +0.065; // Teurere Phase vor 12 Uhr
+    } else if (hour >= 12 && hour < 15) {
+      timeShift = -0.010; // Mittagsfenster
+    } else if (hour >= 15 && hour < 18) {
+      timeShift = isTwelveClockActive ? -0.035 : +0.020; // 12-Uhr-Schutz verhindert Nachmittagspeak
     } else if (hour >= 18 && hour <= 21) {
-      timeShift = -0.06; // Günstiger Abend
-    } else if (hour >= 12 && hour <= 15) {
-      timeShift = -0.01;
-    } else if (hour >= 22 || hour <= 5) {
-      timeShift = +0.05; // Nachtzuschlag
+      timeShift = -0.060; // Günstigster Abend
+    } else {
+      timeShift = +0.050; // Nachtzuschlag
     }
 
     if (day === 2 && hour >= 17 && hour <= 20) {
-      timeShift -= 0.03; // Dienstags-Effekt
+      timeShift -= 0.025; // Dienstags-Effekt
     }
 
     const currentPrice = basePrice + timeShift;
     const dynAverage = basePrice;
-    const lawFlag = Math.random() > 0.7 ? 1 : 0;
 
     const delta = currentPrice - dynAverage;
     let targetScore = 0.5 - (delta * 6);
-    if (lawFlag) targetScore += 0.05;
+    // Unter 12-Uhr-Schutz ab 12 Uhr gibt es einen Stabilitäts- und Sicherheitsbonus
+    if (isTwelveClockActive && hour >= 12 && hour <= 21) {
+      targetScore += 0.08;
+    }
     targetScore = Math.max(0.05, Math.min(0.95, targetScore));
 
     const features = extractFeatures({
@@ -155,7 +180,7 @@ export function generateTrainingDataset(numSamples = 160) {
       hourOfDay: hour,
       currentPrice,
       dynAverage,
-      lawFlag,
+      twelveClockActive: isTwelveClockActive,
     });
 
     xs.push(features);
@@ -294,7 +319,7 @@ export async function initAndTrainModel(epochs = 18) {
  * Trainiert das neuronale Netz inkrementell mit den tatsächlichen Verlaufsdaten der aktuellen Tankstellen
  * und sichert die verbesserten Gewichte direkt in IndexedDB!
  */
-export async function continuouslyTrainOnHistory(stations = [], epochs = 4) {
+export async function continuouslyTrainOnHistory(stations = [], epochs = 4, twelveClockActive = true) {
   if (!stations || stations.length === 0 || isTraining) return;
   if (!model) {
     await initAndTrainModel(15);
@@ -321,6 +346,9 @@ export async function continuouslyTrainOnHistory(stations = [], epochs = 4) {
 
         const delta = price - dynAvg;
         let targetScore = 0.5 - (delta * 6);
+        if (twelveClockActive && hour >= 12 && hour <= 21) {
+          targetScore += 0.08;
+        }
         targetScore = Math.max(0.05, Math.min(0.95, targetScore));
 
         const features = extractFeatures({
@@ -329,7 +357,7 @@ export async function continuouslyTrainOnHistory(stations = [], epochs = 4) {
           hourOfDay: hour,
           currentPrice: price,
           dynAverage: dynAvg,
-          lawFlag: 0,
+          twelveClockActive,
         });
 
         xs.push(features);
@@ -384,9 +412,11 @@ export function predictPriceScore({
   hourOfDay = new Date().getHours(),
   currentPrice = 1.74,
   dynAverage = 1.74,
-  lawFlag = 0,
+  twelveClockActive = true,
+  lawFlag = 1,
 }) {
   const deltaCent = (currentPrice - dynAverage) * 100;
+  const isRuleActive = twelveClockActive !== undefined ? !!twelveClockActive : !!lawFlag;
 
   if (model && isReady) {
     try {
@@ -396,7 +426,7 @@ export function predictPriceScore({
         hourOfDay,
         currentPrice,
         dynAverage,
-        lawFlag,
+        twelveClockActive: isRuleActive,
       });
 
       const inputTensor = tf.tensor2d([inputVector]);
@@ -407,28 +437,31 @@ export function predictPriceScore({
       prediction.dispose();
 
       const score = Math.max(1, Math.min(100, Math.round(scoreVal * 100)));
-      return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent);
+      return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, isRuleActive);
     } catch (e) {
       console.warn('TF.js inference error, using statistical fallback:', e);
     }
   }
 
-  // Fallback
+  // Statischer Fallback
   const baseScore = 50 - deltaCent * 8;
   const timeBonus = (hourOfDay >= 18 && hourOfDay <= 20) ? 14 : (hourOfDay >= 6 && hourOfDay <= 8) ? -16 : 0;
   const dayBonus = dayOfWeek === 2 ? 6 : 0;
-  const lawBonus = lawFlag ? 5 : 0;
+  const ruleBonus = (isRuleActive && hourOfDay >= 12 && hourOfDay <= 21) ? 8 : 0;
 
-  const score = Math.max(1, Math.min(100, Math.round(baseScore + timeBonus + dayBonus + lawBonus)));
-  return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent);
+  const score = Math.max(1, Math.min(100, Math.round(baseScore + timeBonus + dayBonus + ruleBonus)));
+  return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, isRuleActive);
 }
 
 /**
  * 24-STUNDEN NEURALE ZEITREIHEN-KURVEN-PROGNOSE:
  * Berechnet für jede Stunde der nächsten 24h den vorausgesagten Preis & Tiefststände!
+ * Berücksichtigt die gesetzliche 12-Uhr-Regelung (Spritpreisverordnung):
+ * - Nach 12:00 Uhr dürfen Preise gesetzlich NICHT steigen (Preiserhöhungsverbot).
+ * - Garantiert stetigen oder fallenden Verlauf bis zum Abendtief.
  */
-export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
-  if (!station) return [];
+export function predict24HourCurve(station, dynAverage = 1.70, twelveClockActive = true) {
+  if (!station) return null;
   const now = new Date();
   const currentHour = now.getHours();
   const basePrice = station.currentPrice || 1.70;
@@ -440,6 +473,8 @@ export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
   let lowestHour = 18;
   let highestHour = 7;
 
+  let noonPrice = null;
+
   for (let i = 0; i < 24; i++) {
     const futureDate = new Date(now.getTime() + i * 60 * 60 * 1000);
     const hour = futureDate.getHours();
@@ -447,15 +482,38 @@ export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
 
     // Typischer Intraday Preisschwung
     let delta = 0;
-    if (hour >= 6 && hour <= 8) delta = +0.065;
-    else if (hour >= 18 && hour <= 20) delta = -0.052;
-    else if (hour >= 12 && hour <= 14) delta = -0.015;
-    else if (hour >= 22 || hour <= 5) delta = +0.045;
+    if (hour >= 6 && hour < 12) {
+      delta = +0.060; // Vor 12 Uhr Vormittagsspitze
+    } else if (hour >= 12 && hour < 15) {
+      delta = -0.010; // Mittagsfenster
+    } else if (hour >= 15 && hour < 18) {
+      // Unter 12-Uhr-Regel fällt der Preis weiter, ohne Regel droht Zwischenanstieg
+      delta = twelveClockActive ? -0.035 : +0.025;
+    } else if (hour >= 18 && hour <= 20) {
+      delta = -0.055; // Günstigstes Zeitfenster
+    } else if (hour === 21) {
+      delta = -0.025;
+    } else {
+      delta = +0.050; // Nacht (22:00 - 05:59)
+    }
 
     // Dienstag-Vorteil
-    if (day === 2 && hour >= 18 && hour <= 20) delta -= 0.02;
+    if (day === 2 && hour >= 18 && hour <= 20) delta -= 0.020;
 
-    const predPrice = parseFloat(Math.max(1.0, basePrice + delta).toFixed(3));
+    let predPrice = parseFloat(Math.max(1.0, basePrice + delta).toFixed(3));
+
+    // STRIKTE 12-UHR-REGELUNG: Nach 12:00 Uhr bis 21:59 Uhr darf der Preis niemals steigen!
+    if (twelveClockActive) {
+      if (hour === 12) {
+        noonPrice = predPrice;
+      } else if (hour > 12 && hour <= 21 && noonPrice !== null) {
+        if (predPrice > noonPrice) predPrice = noonPrice;
+        if (curve.length > 0) {
+          const prevHourPrice = curve[curve.length - 1].predictedPrice;
+          if (predPrice > prevHourPrice) predPrice = prevHourPrice;
+        }
+      }
+    }
 
     // Neuraler Score für diese Stunde
     const scoreObj = predictPriceScore({
@@ -464,7 +522,7 @@ export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
       hourOfDay: hour,
       currentPrice: predPrice,
       dynAverage: dynAvg,
-      lawFlag,
+      twelveClockActive,
     });
 
     if (predPrice < minPrice) {
@@ -484,6 +542,7 @@ export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
       predictedPrice: predPrice,
       score: scoreObj.score,
       recommendation: scoreObj.recommendation,
+      isTwelveClockProtected: twelveClockActive && hour >= 12 && hour <= 21,
       isLowest: false,
       isHighest: false,
     });
@@ -502,6 +561,7 @@ export function predict24HourCurve(station, dynAverage = 1.70, lawFlag = 0) {
     highestHour,
     highestPrice: maxPrice,
     potentialSavingsCent: parseFloat(((basePrice - minPrice) * 100).toFixed(1)),
+    isTwelveClockActive: !!twelveClockActive,
   };
 }
 
@@ -548,6 +608,7 @@ export function detectBrandJumpLeaders(stations = []) {
 /**
  * PERSONALISIERTER TANK-STRATEGIE-AGENT (OPTIMAL STOPPING AGENT):
  * Entscheidet mathematisch, ob der Nutzer heute tanken sollte oder bis Tag X warten kann.
+ * Integriert die 12-Uhr-Spritpreisverordnung direkt in die Entscheidungsfindung!
  */
 export function calculateOptimalTankStrategy({
   activeVehicle,
@@ -555,6 +616,8 @@ export function calculateOptimalTankStrategy({
   dailyCommuteKm = 25,
   bestStationPrice = 1.70,
   averageWeeklyMinPrice = 1.64,
+  isTwelveClockActive = true,
+  currentHour = new Date().getHours(),
 }) {
   const tankCapacity = activeVehicle?.tankCapacityL || 50;
   const consumption = activeVehicle?.consumptionL100km || 6.2;
@@ -580,6 +643,14 @@ export function calculateOptimalTankStrategy({
     decision = 'URGENT';
     decisionLabel = 'Dringend tanken! (Reserve erreicht)';
     reasoning = `Dein Tank ist fast leer (${remainingRangeKm} km Restreichweite). Warten auf günstigere Tage ist zu riskant.`;
+  } else if (isTwelveClockActive && currentHour >= 12 && currentHour <= 17 && daysUntilEmpty >= 1) {
+    decision = 'WAIT';
+    decisionLabel = 'Bis ca. 18:30 Uhr warten (12-Uhr-Schutz)';
+    reasoning = `⚖️ 12-Uhr-Regelung aktiv: Preiserhöhungen sind heute gesetzlich ausgeschlossen! Die Preise sinken bis ca. 18:30 Uhr weiter. Du hast noch ${remainingRangeKm} km Reichweite und kannst völlig risikofrei auf das Abendtief warten.`;
+  } else if (isTwelveClockActive && currentHour < 12 && potentialSavingsEuro >= 2.0 && daysUntilEmpty >= 1) {
+    decision = 'WAIT';
+    decisionLabel = '12:00 Uhr Preismeldung abwarten';
+    reasoning = `⚖️ 12-Uhr-Regelung aktiv: Vor 12 Uhr sind die Preise noch volatil. Ab 12:00 Uhr dürfen Preise nur noch sinken. Warte die Mittagsanpassung ab für optimale Ersparnis.`;
   } else if (potentialSavingsEuro >= 3.50 && daysUntilEmpty >= 2) {
     decision = 'WAIT';
     decisionLabel = `Warte noch ca. ${daysUntilEmpty} Tage (Spart ~${potentialSavingsEuro.toFixed(2)} €)`;
@@ -587,7 +658,10 @@ export function calculateOptimalTankStrategy({
   } else {
     decision = 'REFUEL_NOW';
     decisionLabel = 'Heute tanken lohnt sich!';
-    reasoning = `Der aktuelle Preis (${bestStationPrice.toFixed(3)} €) ist bereits nahe am Wochentiefststand. Weiteres Warten bringt kaum Ersparnis.`;
+    const ruleNote = isTwelveClockActive && currentHour >= 18 && currentHour <= 21
+      ? ' (⚖️ 12-Uhr-Regelung: Abendtief erreicht, Preissprünge heute ausgeschlossen)'
+      : '';
+    reasoning = `Der aktuelle Preis (${bestStationPrice.toFixed(3)} €) ist bereits nahe am Tiefststand. Weiteres Warten bringt kaum Ersparnis${ruleNote}.`;
   }
 
   return {
@@ -601,7 +675,7 @@ export function calculateOptimalTankStrategy({
   };
 }
 
-function formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent) {
+function formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, twelveClockActive = true) {
   let recommendation = 'Neutral';
   let badgeClass = 'neutral';
   let reasoning = '';
@@ -609,18 +683,24 @@ function formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent) {
   const dayNames = ['Sonntags', 'Montags', 'Dienstags', 'Mittwochs', 'Donnerstags', 'Freitags', 'Samstags'];
   const dayName = dayNames[dayOfWeek] || 'Heute';
 
+  const isAfternoonProtected = twelveClockActive && hourOfDay >= 12 && hourOfDay <= 21;
+
   if (score >= 75) {
     recommendation = 'Sofort tanken! (Sehr günstig)';
     badgeClass = 'favorable';
-    reasoning = `Preis liegt ${Math.abs(deltaCent).toFixed(1)} ct unter Marktschnitt. ${dayName} um ${hourOfDay}:00 Uhr ist ein optimales Tankfenster.`;
+    reasoning = `Preis liegt ${Math.abs(deltaCent).toFixed(1)} ct unter Marktschnitt. ${dayName} um ${hourOfDay}:00 Uhr ist ein optimales Tankfenster.${isAfternoonProtected ? ' ⚖️ 12-Uhr-Preisschutz aktiv.' : ''}`;
   } else if (score >= 50) {
-    recommendation = 'Guter Zeitpunkt';
+    recommendation = isAfternoonProtected ? 'Guter Zeitpunkt (Preisschutz aktiv)' : 'Guter Zeitpunkt';
     badgeClass = 'favorable-subtle';
-    reasoning = `Preis im fairen Bereich. Weiterer Preisabfall am frühen Abend (~18:30 Uhr) möglich.`;
+    reasoning = isAfternoonProtected
+      ? `Faires Preisniveau. ⚖️ 12-Uhr-Regelung garantiert: Preise können bis heute Nacht nicht mehr steigen! Tiefster Punkt gegen 18:30 Uhr erwartet.`
+      : `Preis im fairen Bereich. Weiterer Preisabfall am frühen Abend (~18:30 Uhr) möglich.`;
   } else if (score >= 30) {
-    recommendation = 'Abwarten empfohlen';
+    recommendation = hourOfDay < 12 && twelveClockActive ? 'Auf 12:00 Uhr warten' : 'Abwarten empfohlen';
     badgeClass = 'neutral';
-    reasoning = `Preis liegt leicht über dem gleitenden Durchschnitt. Günstigeres Fenster ab ca. 18 Uhr erwartet.`;
+    reasoning = hourOfDay < 12 && twelveClockActive
+      ? `Vormittagspreis leicht erhöht. ⚖️ Warte auf die 12:00 Uhr Meldung: Danach dürfen Tankstellen die Preise nur noch senken.`
+      : `Preis liegt leicht über dem gleitenden Durchschnitt. Günstigeres Fenster ab ca. 18 Uhr erwartet.`;
   } else {
     recommendation = 'Jetzt nicht tanken (Teure Phase)';
     badgeClass = 'unfavorable';

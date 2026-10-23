@@ -16,6 +16,7 @@ export default function MachineLearningPanel({
   stations = [],
   activeVehicle,
   activeLawsCount = 0,
+  isTwelveClockActive = true,
 }) {
   const [mlStatus, setMlStatus] = useState({ ready: false, epoch: 0, loss: 0, totalSamplesLearned: 160 });
   const [isRetraining, setIsRetraining] = useState(false);
@@ -26,7 +27,11 @@ export default function MachineLearningPanel({
   const [simHour, setSimHour] = useState(new Date().getHours());
   const [simPrice, setSimPrice] = useState(1.68);
   const [simDynAvg, setSimDynAvg] = useState(1.72);
-  const [simLaw, setSimLaw] = useState(activeLawsCount > 0 ? 1 : 0);
+  const [simTwelveClock, setSimTwelveClock] = useState(isTwelveClockActive);
+
+  useEffect(() => {
+    setSimTwelveClock(isTwelveClockActive);
+  }, [isTwelveClockActive]);
 
   useEffect(() => {
     const unsub = subscribeMLStatus((status) => {
@@ -37,17 +42,17 @@ export default function MachineLearningPanel({
 
   const handleContinuousTrain = async () => {
     setIsRetraining(true);
-    await continuouslyTrainOnHistory(stations, 6);
+    await continuouslyTrainOnHistory(stations, 6, isTwelveClockActive);
     setIsRetraining(false);
   };
 
   const selectedStation = stations.find((s) => s.id === selectedStationId) || stations[0];
 
-  // 1. 24h Neurale Preiskurve
+  // 1. 24h Neurale Preiskurve mit 12-Uhr-Spritpreisverordnung
   const neural24h = useMemo(() => {
     if (!selectedStation) return null;
-    return predict24HourCurve(selectedStation, selectedStation.evaluation?.effectiveDynAverage, simLaw);
-  }, [selectedStation, simLaw]);
+    return predict24HourCurve(selectedStation, selectedStation.evaluation?.effectiveDynAverage, simTwelveClock);
+  }, [selectedStation, simTwelveClock]);
 
   // 2. Preisführerschafts-Erkennung
   const brandJumpAlert = useMemo(() => {
@@ -64,8 +69,10 @@ export default function MachineLearningPanel({
       dailyCommuteKm: 25,
       bestStationPrice: bestPrice,
       averageWeeklyMinPrice: weeklyMin,
+      isTwelveClockActive: simTwelveClock,
+      currentHour: simHour,
     });
-  }, [activeVehicle, stations, neural24h]);
+  }, [activeVehicle, stations, neural24h, simTwelveClock, simHour]);
 
   // 4. Live Vorhersage im Simulator
   const livePrediction = predictPriceScore({
@@ -74,7 +81,7 @@ export default function MachineLearningPanel({
     hourOfDay: simHour,
     currentPrice: simPrice,
     dynAverage: simDynAvg,
-    lawFlag: simLaw,
+    twelveClockActive: simTwelveClock,
   });
 
   const dayNames = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
@@ -298,6 +305,12 @@ export default function MachineLearningPanel({
                 <h4 style={{ fontSize: '0.98rem', fontWeight: 800, color: '#0F172A' }}>
                   Neurale 24-Stunden Preiskurven-Prognose
                 </h4>
+                {neural24h?.isTwelveClockActive && (
+                  <span className="badge badge-favorable" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <ShieldCheck size={12} />
+                    <span>12-Uhr-Regelung aktiv: Preiserhöhungsstopp ab 12h</span>
+                  </span>
+                )}
               </div>
               <p style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '0.15rem' }}>
                 Vorausberechneter Preisverlauf für {selectedStation?.name}: Tiefststand um {neural24h.lowestHour}:00 Uhr (~{neural24h.lowestPrice.toFixed(3)} €), Höchstpreis um {neural24h.highestHour}:00 Uhr (~{neural24h.highestPrice.toFixed(3)} €).
@@ -477,6 +490,41 @@ export default function MachineLearningPanel({
               style={{ width: '100%', accentColor: '#0F172A' }}
             />
           </div>
+        </div>
+
+        {/* 12-Uhr-Spritpreisverordnung Szenario-Toggle */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.65rem 0.85rem',
+            background: '#F8FAFC',
+            borderRadius: '8px',
+            border: '1px solid #E2E8F0',
+            marginBottom: '1rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Clock size={16} color={simTwelveClock ? '#059669' : '#64748B'} />
+            <div>
+              <strong style={{ fontSize: '0.82rem', color: '#0F172A' }}>
+                12-Uhr-Spritpreisverordnung simulieren
+              </strong>
+              <p style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                Untersagt Preiserhöhungen nach 12:00 Uhr gesetzlich (Preisschutz im neuronalen Netz).
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className={`btn btn-sm ${simTwelveClock ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setSimTwelveClock(!simTwelveClock)}
+            style={{ fontSize: '0.75rem', minWidth: '110px' }}
+          >
+            {simTwelveClock ? '12h-Schutz Aktiv' : 'Inaktiv'}
+          </button>
         </div>
 
         {/* Live Inferenz Ergebnis */}
