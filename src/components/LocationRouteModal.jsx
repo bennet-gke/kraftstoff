@@ -44,12 +44,13 @@ export default function LocationRouteModal({
 
   // Stelle sicher, dass startType & endType stets mit den tatsächlich vorhandenen Orten übereinstimmen
   useEffect(() => {
-    if (locations && locations.length > 0) {
-      if (startType !== 'custom' && !locations.some((l) => l.id === startType)) {
-        setStartType(locations[0].id);
+    const safeLocs = Array.isArray(locations) && locations.length > 0 ? locations : [];
+    if (safeLocs.length > 0) {
+      if (startType !== 'custom' && !safeLocs.some((l) => l.id === startType)) {
+        setStartType(safeLocs[0].id);
       }
-      if (endType !== 'custom' && !locations.some((l) => l.id === endType)) {
-        setEndType(locations[1]?.id || locations[0].id);
+      if (endType !== 'custom' && !safeLocs.some((l) => l.id === endType)) {
+        setEndType(safeLocs[1]?.id || safeLocs[0].id);
       }
     }
   }, [locations, startType, endType]);
@@ -67,8 +68,8 @@ export default function LocationRouteModal({
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const lat = parseFloat(pos.coords.latitude.toFixed(6));
-          const lng = parseFloat(pos.coords.longitude.toFixed(6));
+          const lat = parseFloat(Number(pos.coords.latitude || 0).toFixed(6));
+          const lng = parseFloat(Number(pos.coords.longitude || 0).toFixed(6));
           setNewLocLat(lat.toString());
           setNewLocLng(lng.toString());
           const rev = await locationService.reverseGeocode(lat, lng);
@@ -102,7 +103,7 @@ export default function LocationRouteModal({
         setNewLocLng(geo.lng.toString());
         setGeoFeedback({
           success: true,
-          message: `Gefunden: ${geo.displayName.slice(0, 50)}... (${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)})`,
+          message: `Gefunden: ${geo.displayName.slice(0, 50)}... (${Number(geo.lat || 0).toFixed(4)}, ${Number(geo.lng || 0).toFixed(4)})`,
         });
       } else {
         setGeoFeedback({ success: false, message: 'Adresse nicht gefunden. Bitte prüfen oder Koordinaten direkt eingeben.' });
@@ -138,7 +139,7 @@ export default function LocationRouteModal({
 
       const newLoc = await locationService.addLocation({
         name: newLocName,
-        address: address || `${lat?.toFixed(4)}, ${lng?.toFixed(4)}`,
+        address: address || `${Number(lat || 0).toFixed(4)}, ${Number(lng || 0).toFixed(4)}`,
         lat,
         lng,
         radiusKm: parseFloat(newLocRadius) || 5.0,
@@ -196,35 +197,52 @@ export default function LocationRouteModal({
 
   // 4. Start & Zielkoordinaten für Route ermitteln (robust & fehlertolerant)
   const resolveCoordsForRoute = async (type, customQuery = '') => {
+    const safeLocs = Array.isArray(locations) && locations.length > 0 ? locations : [];
+
     // 1. Suche in gespeicherten Standorten nach ID oder Name
     if (type && type !== 'custom') {
-      let loc = locations.find((l) => l.id === type);
+      let loc = safeLocs.find((l) => l.id === type);
       if (!loc) {
-        loc = locations.find((l) => l.name === type || l.name?.toLowerCase() === type?.toLowerCase());
+        loc = safeLocs.find((l) => l.name === type || l.name?.toLowerCase() === type?.toLowerCase());
       }
       if (loc && loc.lat != null && loc.lng != null) {
         const lat = parseFloat(loc.lat);
         const lng = parseFloat(loc.lng);
         if (!isNaN(lat) && !isNaN(lng)) {
-          return { name: loc.name, lat, lng };
+          return { name: loc.name || 'Standort', lat, lng };
         }
       }
     }
 
     // 2. Benutzerdefinierte Adresse auflösen
-    const query = (customQuery || (type === 'custom' ? '' : type) || '').trim();
+    const query = (customQuery || '').trim();
     if (query) {
-      const geo = await locationService.geocodeAddress(query);
-      if (geo && geo.lat != null && geo.lng != null) {
-        return { name: query, lat: parseFloat(geo.lat), lng: parseFloat(geo.lng) };
+      try {
+        const geo = await locationService.geocodeAddress(query);
+        if (geo && geo.lat != null && geo.lng != null) {
+          const lat = parseFloat(geo.lat);
+          const lng = parseFloat(geo.lng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            return { name: query, lat, lng };
+          }
+        }
+      } catch (err) {
+        console.warn('Geocoding notice:', err);
       }
     }
 
+    // Falls custom gewählt, aber noch kein Text eingegeben: kein Fallback
+    if (type === 'custom') return null;
+
     // 3. Fallback: Erstbeste Location falls vorhanden
-    if (locations && locations.length > 0) {
-      const fallback = locations.find((l) => !isNaN(parseFloat(l.lat)) && !isNaN(parseFloat(l.lng))) || locations[0];
+    if (safeLocs.length > 0) {
+      const fallback = safeLocs.find((l) => !isNaN(parseFloat(l.lat)) && !isNaN(parseFloat(l.lng))) || safeLocs[0];
       if (fallback && fallback.lat != null && fallback.lng != null) {
-        return { name: fallback.name, lat: parseFloat(fallback.lat), lng: parseFloat(fallback.lng) };
+        const lat = parseFloat(fallback.lat);
+        const lng = parseFloat(fallback.lng);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          return { name: fallback.name || 'Standort', lat, lng };
+        }
       }
     }
 
@@ -237,18 +255,18 @@ export default function LocationRouteModal({
     let isCancelled = false;
 
     const autoCalculateRoute = async () => {
-      const start = await resolveCoordsForRoute(startType, customStartQuery);
-      const end = await resolveCoordsForRoute(endType, customEndQuery);
-
-      if (!start || !end) return;
-
-      // Routennamen automatisch passend vorschlagen, falls noch leer oder Standard
-      if (!newRouteName.trim() || newRouteName.includes(' - ') || newRouteName.includes(' ➔ ')) {
-        setNewRouteName(`${start.name} - ${end.name}`);
-      }
-
-      setIsCalculatingOsm(true);
       try {
+        const start = await resolveCoordsForRoute(startType, customStartQuery);
+        const end = await resolveCoordsForRoute(endType, customEndQuery);
+
+        if (!start || !end || isCancelled) return;
+
+        // Routennamen automatisch passend vorschlagen, falls noch leer oder Standard
+        if (!newRouteName.trim() || newRouteName.includes(' - ') || newRouteName.includes(' ➔ ')) {
+          setNewRouteName(`${start.name || 'Start'} - ${end.name || 'Ziel'}`);
+        }
+
+        setIsCalculatingOsm(true);
         const res = await routeService.calculateOsmRoute(start, end);
         if (!isCancelled && res.success) {
           setOsmRoutePreview({
@@ -268,7 +286,7 @@ export default function LocationRouteModal({
       }
     };
 
-    const timer = setTimeout(autoCalculateRoute, 200);
+    const timer = setTimeout(autoCalculateRoute, 250);
     return () => {
       isCancelled = true;
       clearTimeout(timer);
@@ -459,10 +477,10 @@ export default function LocationRouteModal({
                           )}
                         </div>
                         <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
-                          {loc.address || `${loc.lat}, ${loc.lng}`}
+                          {loc.address || `${Number(loc.lat || 0).toFixed(4)}, ${Number(loc.lng || 0).toFixed(4)}`}
                         </div>
                         <div style={{ fontSize: '0.68rem', color: '#94A3B8' }} className="num-mono">
-                          {loc.lat?.toFixed(4)}, {loc.lng?.toFixed(4)}
+                          {Number(loc.lat || 0).toFixed(4)}, {Number(loc.lng || 0).toFixed(4)}
                         </div>
                       </div>
 
@@ -491,15 +509,15 @@ export default function LocationRouteModal({
                     <div style={{ background: '#F8FAFC', border: '1px solid #F1F5F9', borderRadius: '6px', padding: '0.45rem 0.65rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: '#475569', marginBottom: '0.2rem' }}>
                         <span>Suchradius für Tankstellen:</span>
-                        <strong className="num-mono" style={{ color: '#0F172A' }}>{loc.radiusKm} km</strong>
+                        <strong className="num-mono" style={{ color: '#0F172A' }}>{Number(loc.radiusKm || 5)} km</strong>
                       </div>
                       <input
                         type="range"
                         min="2"
                         max="35"
                         step="1"
-                        value={loc.radiusKm}
-                        onChange={(e) => handleUpdateRadius(loc.id, parseFloat(e.target.value))}
+                        value={Number(loc.radiusKm || 5)}
+                        onChange={(e) => handleUpdateRadius(loc.id, parseFloat(e.target.value) || 5)}
                         style={{ width: '100%', accentColor: '#0F172A' }}
                       />
                     </div>
@@ -815,8 +833,8 @@ export default function LocationRouteModal({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.72rem', color: '#475569', marginTop: '0.35rem' }}>
-                      <span>Strecke: <strong>{r.totalDistanceKm} km</strong></span>
-                      <span>Korridor-Puffer: <strong>±{r.corridorRadiusKm} km</strong></span>
+                      <span>Strecke: <strong>{Number(r.totalDistanceKm || 0).toFixed(1)} km</strong></span>
+                      <span>Korridor-Puffer: <strong>±{Number(r.corridorRadiusKm || 2.5).toFixed(1)} km</strong></span>
                       <span style={{ color: '#059669', fontWeight: 600 }}>OSM-geprüft</span>
                     </div>
                   </div>
@@ -946,11 +964,11 @@ export default function LocationRouteModal({
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.25rem' }}>
                     <div>
                       <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrstrecke:</span>
-                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>{osmRoutePreview.distanceKm} km</strong>
+                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>{Number(osmRoutePreview.distanceKm || 0).toFixed(1)} km</strong>
                     </div>
                     <div>
                       <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrzeit:</span>
-                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>~{osmRoutePreview.durationMin} Min.</strong>
+                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>~{Math.round(Number(osmRoutePreview.durationMin || 0))} Min.</strong>
                     </div>
                     <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
                       <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>OSM-Punkte:</span>

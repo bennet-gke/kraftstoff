@@ -794,7 +794,7 @@ export default function App() {
                       {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
                       {bestStation.detour?.isProfitable ? (
                         <strong style={{ color: '#059669' }}>
-                          Fahrt lohnt sich! Netto-Gewinn: +{bestStation.detour?.netSavingsEuro.toFixed(2)} €
+                          Fahrt lohnt sich! Netto-Gewinn: +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} €
                         </strong>
                       ) : (
                         <span>Niedrigster Zapfsäulenpreis</span>
@@ -805,7 +805,7 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
                     <div style={{ textAlign: 'right' }}>
                       <div className="num-mono" style={{ fontSize: '2rem', fontWeight: 800, color: '#059669', lineHeight: 1 }}>
-                        {bestStation.currentPrice.toFixed(3)}
+                        {Number(bestStation.currentPrice || 1.70).toFixed(3)}
                         <span style={{ fontSize: '0.9rem', color: '#64748B', marginLeft: '0.25rem' }}>€/L</span>
                       </div>
                       <span style={{ fontSize: '0.72rem', color: '#94A3B8', textTransform: 'uppercase' }}>
@@ -912,12 +912,12 @@ export default function App() {
                   min="2"
                   max="25"
                   step="1"
-                  value={activeLocation?.radiusKm || 5}
-                  onChange={(e) => handleUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
+                  value={Number(activeLocation?.radiusKm || 5)}
+                  onChange={(e) => activeLocation?.id && handleUpdateRadius(activeLocation.id, parseFloat(e.target.value) || 5)}
                   style={{ width: '90px', accentColor: '#0F172A', cursor: 'pointer' }}
                 />
                 <strong className="num-mono" style={{ color: '#0F172A', minWidth: '38px' }}>
-                  {activeLocation?.radiusKm} km
+                  {Number(activeLocation?.radiusKm || 5)} km
                 </strong>
               </div>
             </div>
@@ -925,7 +925,7 @@ export default function App() {
             {/* Listenkopf */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
               <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                {sortedStations.length} Tankstellen im Radius ({activeLocation?.radiusKm} km um {activeLocation?.name})
+                {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
                 {activeRoute && ` • Korridor: ${activeRoute.name}`}
               </div>
 

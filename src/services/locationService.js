@@ -152,8 +152,23 @@ class LocationService {
   loadLocations() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) return JSON.parse(stored);
-    } catch {}
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((loc, idx) => ({
+            ...loc,
+            id: loc.id || `loc-stored-${idx}`,
+            name: loc.name || 'Standort',
+            address: loc.address || '',
+            lat: typeof loc.lat === 'number' && !isNaN(loc.lat) ? loc.lat : parseFloat(loc.lat) || 52.5200,
+            lng: typeof loc.lng === 'number' && !isNaN(loc.lng) ? loc.lng : parseFloat(loc.lng) || 13.4050,
+            radiusKm: typeof loc.radiusKm === 'number' && !isNaN(loc.radiusKm) ? loc.radiusKm : parseFloat(loc.radiusKm) || 5.0,
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading stored locations, using defaults:', e);
+    }
     return [...INITIAL_LOCATIONS];
   }
 
@@ -162,22 +177,32 @@ class LocationService {
       const stored = localStorage.getItem(ACTIVE_LOCATION_KEY);
       if (stored && this.locations.some((l) => l.id === stored)) return stored;
     } catch {}
-    return this.locations[0]?.id || 'loc-home-mitte';
+    return this.locations[0]?.id || INITIAL_LOCATIONS[0].id;
   }
 
   saveLocations(newLocations) {
-    this.locations = newLocations;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newLocations));
+    const sanitized = (Array.isArray(newLocations) && newLocations.length > 0 ? newLocations : INITIAL_LOCATIONS).map((loc, idx) => ({
+      ...loc,
+      id: loc.id || `loc-${idx}`,
+      name: loc.name || 'Standort',
+      address: loc.address || '',
+      lat: typeof loc.lat === 'number' && !isNaN(loc.lat) ? loc.lat : parseFloat(loc.lat) || 52.5200,
+      lng: typeof loc.lng === 'number' && !isNaN(loc.lng) ? loc.lng : parseFloat(loc.lng) || 13.4050,
+      radiusKm: typeof loc.radiusKm === 'number' && !isNaN(loc.radiusKm) ? loc.radiusKm : parseFloat(loc.radiusKm) || 5.0,
+    }));
+    this.locations = sanitized;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
     return this.locations;
   }
 
   getActiveLocation() {
-    return this.locations.find((l) => l.id === this.activeLocationId) || this.locations[0];
+    const found = this.locations.find((l) => l.id === this.activeLocationId);
+    return found || this.locations[0] || INITIAL_LOCATIONS[0];
   }
 
   setActiveLocationId(id) {
-    this.activeLocationId = id;
-    localStorage.setItem(ACTIVE_LOCATION_KEY, id);
+    this.activeLocationId = id || (this.locations[0]?.id || INITIAL_LOCATIONS[0].id);
+    localStorage.setItem(ACTIVE_ROUTE_KEY, this.activeLocationId);
     localStorage.setItem('kraftstoff_custom_location_set', 'true');
     return this.getActiveLocation();
   }
@@ -442,23 +467,38 @@ class LocationService {
    * Aktualisiert zudem das distanceKm-Attribut bezogen auf diesen Standort.
    */
   filterStationsByRadius(stations, location = this.getActiveLocation()) {
-    if (!location) return stations;
+    if (!stations || !Array.isArray(stations) || stations.length === 0) return [];
+    const loc = location || this.getActiveLocation();
+    const locLat = parseFloat(loc?.lat);
+    const locLng = parseFloat(loc?.lng);
+    const radius = parseFloat(loc?.radiusKm) || 6.0;
 
-    return stations
+    if (isNaN(locLat) || isNaN(locLng)) {
+      return stations;
+    }
+
+    const filtered = stations
       .map((station) => {
-        const dist = calculateHaversineDistance(
-          location.lat,
-          location.lng,
-          station.lat,
-          station.lng
-        );
+        const stLat = parseFloat(station.lat);
+        const stLng = parseFloat(station.lng);
+        if (isNaN(stLat) || isNaN(stLng)) {
+          return { ...station, distanceKm: 1.0, isWithinRadius: true };
+        }
+        const dist = calculateHaversineDistance(locLat, locLng, stLat, stLng);
         return {
           ...station,
-          distanceKm: dist,
-          isWithinRadius: dist <= location.radiusKm,
+          distanceKm: isNaN(dist) ? 1.0 : dist,
+          isWithinRadius: isNaN(dist) ? true : dist <= radius,
         };
       })
-      .filter((s) => s.distanceKm <= location.radiusKm);
+      .filter((s) => s.isWithinRadius);
+
+    // Falls durch sehr kleinen Radius keine Stationen übrig bleiben, zeige die 3 nächsten an
+    if (filtered.length === 0 && stations.length > 0) {
+      return [...stations].sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0)).slice(0, 4);
+    }
+
+    return filtered;
   }
 }
 
