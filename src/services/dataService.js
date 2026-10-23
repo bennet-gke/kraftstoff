@@ -1,0 +1,573 @@
+/**
+ * KRAFTSTOFF - Unified Data Service & API Bridge
+ * 
+ * Verwaltet Datenhaltung nach Spezifikation:
+ * - Supabase Integration (/rest/v1/prices, /rest/v1/history, /rest/v1/settings, /rest/v1/push_subs)
+ * - Tankerkönig API Bridge
+ * - Lokaler Offline-/Demo-Simulator mit realistischen deutschen Kraftstoffzyklen
+ */
+
+import { createClient } from '@supabase/supabase-js';
+import { offsetCoordinates } from './locationService';
+
+// Lokale Speicher-Schlüssel
+const STORAGE_KEYS = {
+  SETTINGS: 'kraftstoff_user_settings',
+  CONFIG: 'kraftstoff_laws_taxes',
+  CUSTOM_KEYS: 'kraftstoff_api_credentials',
+};
+
+// Standard-Tankstellen mit Geodaten für Pendler-Route (Berlin City & Umland)
+export const INITIAL_STATIONS = [
+  {
+    id: 'station-aral-alex',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000001',
+    name: 'Aral Tankstelle Alexanderplatz',
+    brand: 'Aral',
+    street: 'Alexanderstraße 1',
+    city: 'Berlin',
+    postCode: '10178',
+    lat: 52.5219,
+    lng: 13.4132,
+    distanceKm: 1.2,
+    isOnCommuteRoute: true,
+    isOpen: true,
+    basePriceOffset: 0.02, // Aral typisch leicht höher als JET
+  },
+  {
+    id: 'station-jet-bismarck',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000002',
+    name: 'JET Tankstelle Charlottenburg',
+    brand: 'JET',
+    street: 'Bismarckstraße 88',
+    city: 'Berlin',
+    postCode: '10627',
+    lat: 52.5115,
+    lng: 13.3050,
+    distanceKm: 3.4,
+    isOnCommuteRoute: true,
+    isOpen: true,
+    basePriceOffset: -0.03, // JET Discounterschnitt oft günstiger
+  },
+  {
+    id: 'station-shell-potsdam',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000003',
+    name: 'Shell Station Tiergarten',
+    brand: 'Shell',
+    street: 'Potsdamer Straße 12',
+    city: 'Berlin',
+    postCode: '10785',
+    lat: 52.5085,
+    lng: 13.3756,
+    distanceKm: 2.1,
+    isOnCommuteRoute: true,
+    isOpen: true,
+    basePriceOffset: 0.01,
+  },
+  {
+    id: 'station-total-haupt',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000004',
+    name: 'TotalEnergies Schöneberg',
+    brand: 'TotalEnergies',
+    street: 'Hauptstraße 45',
+    city: 'Berlin',
+    postCode: '10827',
+    lat: 52.4850,
+    lng: 13.3540,
+    distanceKm: 4.8,
+    isOnCommuteRoute: false,
+    isOpen: true,
+    basePriceOffset: -0.01,
+  },
+  {
+    id: 'station-hem-mehring',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000005',
+    name: 'HEM Tankstelle Mehringdamm',
+    brand: 'HEM',
+    street: 'Mehringdamm 32',
+    city: 'Berlin',
+    postCode: '10961',
+    lat: 52.4920,
+    lng: 13.3880,
+    distanceKm: 2.9,
+    isOnCommuteRoute: true,
+    isOpen: true,
+    basePriceOffset: -0.025,
+  },
+  {
+    id: 'station-esso-danziger',
+    tankerkoenig_id: '00000000-0000-0000-0000-000000000006',
+    name: 'Esso Station Prenzlauer Berg',
+    brand: 'Esso',
+    street: 'Danziger Straße 102',
+    city: 'Berlin',
+    postCode: '10405',
+    lat: 52.5360,
+    lng: 13.4280,
+    distanceKm: 3.8,
+    isOnCommuteRoute: false,
+    isOpen: true,
+    basePriceOffset: 0.005,
+  },
+];
+
+// Gesetzliche & steuerliche Konfigurationsobjekte nach Spezifikation Seite 3
+export const INITIAL_LAWS_TAXES = [
+  {
+    id: 'law-tankrabatt',
+    key: 'tankrabatt_temporaer',
+    label: 'Temporärer Bundes-Tankrabatt',
+    discountCent: -14.0,
+    isActive: false,
+    description: 'Staatliche temporäre Entlastung zur Senkung der Energiesteuer auf Kraftstoffe.',
+  },
+  {
+    id: 'law-co2',
+    key: 'co2_preisanpassung',
+    label: 'CO2-Abgabe Stufe 2026',
+    discountCent: 4.5,
+    isActive: true,
+    description: 'Gesetzlich verankerte CO2-Preiskomponente pro Liter Kraftstoff.',
+  },
+  {
+    id: 'law-pendler',
+    key: 'pendler_bonus',
+    label: 'Regionale Pendler-Entlastung',
+    discountCent: -2.5,
+    isActive: false,
+    description: 'Sonderrabatt für zertifizierte Arbeitspendler während der Kern-Rushhour.',
+  },
+];
+
+// Generiert realistische Zeitreihendaten für 7 Tage stündlich
+export function generateRealisticHistory(station, fuelType = 'diesel') {
+  const points = [];
+  const now = new Date();
+  
+  // Grundpreise nach Sorte
+  const basePriceByFuel = {
+    diesel: 1.679,
+    e10: 1.729,
+    e5: 1.789,
+  };
+  const base = (basePriceByFuel[fuelType] || 1.68) + (station.basePriceOffset || 0);
+
+  // 7 Tage * 24 Stunden = 168 Messpunkte
+  for (let i = 168; i >= 0; i--) {
+    const timestamp = new Date(now.getTime() - i * 60 * 60 * 1000);
+    const hour = timestamp.getHours();
+    const day = timestamp.getDay();
+
+    // Typischer deutscher Kraftstoff-Tagesgang:
+    // 06:00-08:30: Morgenspitze (+7 ct)
+    // 12:00-14:00: Mittagsdelle (-1 ct)
+    // 15:00-17:00: Nachmittagsanstieg (+4 ct)
+    // 18:00-20:00: Günstigste Zeit des Tages (-5 ct)
+    // 22:00-05:00: Nachtzuschlag (+6 ct)
+    let hourDelta = 0;
+    if (hour >= 6 && hour <= 8) hourDelta = 0.072;
+    else if (hour >= 9 && hour <= 11) hourDelta = 0.025;
+    else if (hour >= 12 && hour <= 14) hourDelta = -0.012;
+    else if (hour >= 15 && hour <= 17) hourDelta = 0.038;
+    else if (hour >= 18 && hour <= 20) hourDelta = -0.054;
+    else if (hour === 21) hourDelta = -0.020;
+    else hourDelta = 0.050; // Nacht
+
+    // Wochentags-Effekt: Dienstag & Mittwoch oft günstig
+    let dayDelta = 0;
+    if (day === 2) dayDelta = -0.025; // Dienstag
+    if (day === 5 || day === 6) dayDelta = 0.015; // Fr/Sa teurer
+
+    // Leichtes Rauschen (+/- 0.8 Cent)
+    const noise = (Math.sin(i * 1.5) * 0.008) + (Math.cos(i * 0.7) * 0.005);
+    const calculatedPrice = parseFloat((base + hourDelta + dayDelta + noise).toFixed(3));
+
+    points.push({
+      timestamp: timestamp.toISOString(),
+      hour,
+      day,
+      price: calculatedPrice,
+      isCheapWindow: hour >= 18 && hour <= 20,
+    });
+  }
+
+  return points;
+}
+
+/**
+ * Generiert passgenaue, realistische Tankstellen um einen beliebigen Standort herum,
+ * damit die Suche und der Radius überall in Deutschland nahtlos funktionieren.
+ */
+export function generateStationsForLocation(location, fuelType = 'diesel') {
+  const targetLoc = location || {
+    lat: 52.5200,
+    lng: 13.4050,
+    radiusKm: 6.0,
+    name: 'Berlin-Mitte',
+  };
+
+  const radius = targetLoc.radiusKm || 5.0;
+  const brandConfigs = [
+    {
+      brand: 'JET',
+      nameSuffix: 'Tankstelle',
+      basePriceOffset: -0.035, // 3.5 Cent günstiger Discounter
+      distFactor: 0.35,
+      bearing: 40,
+      isOnCommute: true,
+      street: 'Industriestraße 14',
+    },
+    {
+      brand: 'HEM',
+      nameSuffix: 'Station',
+      basePriceOffset: -0.025, // 2.5 Cent günstiger Discounter
+      distFactor: 0.52,
+      bearing: 190,
+      isOnCommute: true,
+      street: 'Bahnhofstraße 32',
+    },
+    {
+      brand: 'Aral',
+      nameSuffix: 'Center',
+      basePriceOffset: 0.020, // Premium
+      distFactor: 0.25,
+      bearing: 110,
+      isOnCommute: true,
+      street: 'Hauptstraße 1',
+    },
+    {
+      brand: 'Shell',
+      nameSuffix: 'Station',
+      basePriceOffset: 0.015,
+      distFactor: 0.65,
+      bearing: 275,
+      isOnCommute: false,
+      street: 'Bundesstraße 77',
+    },
+    {
+      brand: 'TotalEnergies',
+      nameSuffix: 'Express',
+      basePriceOffset: -0.010,
+      distFactor: 0.78,
+      bearing: 320,
+      isOnCommute: false,
+      street: 'Gewerbeweg 9',
+    },
+    {
+      brand: 'Esso',
+      nameSuffix: 'Station',
+      basePriceOffset: 0.005,
+      distFactor: 0.85,
+      bearing: 15,
+      isOnCommute: true,
+      street: 'Ringstraße 55',
+    },
+    {
+      brand: 'Star',
+      nameSuffix: 'Tankstelle',
+      basePriceOffset: -0.030,
+      distFactor: 0.45,
+      bearing: 155,
+      isOnCommute: true,
+      street: 'Südpromenade 20',
+    },
+  ];
+
+  const cleanCity = targetLoc.name ? targetLoc.name.replace(/\(.*?\)/g, '').trim() : 'Zentrum';
+
+  return brandConfigs.map((cfg, idx) => {
+    const distKm = parseFloat(Math.max(0.5, radius * cfg.distFactor).toFixed(1));
+    const coords = offsetCoordinates(targetLoc.lat, targetLoc.lng, distKm, cfg.bearing);
+    const stationId = `st-${cfg.brand.toLowerCase()}-${targetLoc.id || 'loc'}-${idx}`;
+
+    return {
+      id: stationId,
+      tankerkoenig_id: `sim-${stationId}`,
+      name: `${cfg.brand} ${cfg.nameSuffix} ${cleanCity}`,
+      brand: cfg.brand,
+      street: cfg.street,
+      city: cleanCity,
+      postCode: '10000',
+      lat: coords.lat,
+      lng: coords.lng,
+      distanceKm: distKm,
+      isOnCommuteRoute: cfg.isOnCommute,
+      isOpen: true,
+      basePriceOffset: cfg.basePriceOffset,
+    };
+  });
+}
+
+class DataService {
+  constructor() {
+    this.supabase = null;
+    this.stations = [...INITIAL_STATIONS];
+    this.lawsTaxes = this.loadStoredLaws();
+    this.userSettings = this.loadStoredSettings();
+    this.cachedHistory = new Map();
+    this.initSupabaseClient();
+  }
+
+  initSupabaseClient() {
+    const creds = this.getCredentials();
+    if (creds.supabaseUrl && creds.supabaseKey) {
+      try {
+        this.supabase = createClient(creds.supabaseUrl, creds.supabaseKey);
+      } catch (e) {
+        console.warn('Failed to init Supabase client:', e);
+      }
+    }
+  }
+
+  getCredentials() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.CUSTOM_KEYS);
+      const creds = stored ? JSON.parse(stored) : {};
+
+      const envKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_TANKERKOENIG_KEY ? import.meta.env.VITE_TANKERKOENIG_KEY.trim() : '';
+      const tk = (creds.tankerkoenigKey || creds.tankerkoenigApiKey || envKey || '').trim();
+
+      return {
+        ...creds,
+        tankerkoenigKey: tk,
+        tankerkoenigApiKey: tk,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  saveCredentials(creds) {
+    const current = this.getCredentials();
+    const tk = (creds.tankerkoenigKey !== undefined ? creds.tankerkoenigKey : (creds.tankerkoenigApiKey !== undefined ? creds.tankerkoenigApiKey : current.tankerkoenigKey)) || '';
+    const normalized = {
+      ...current,
+      ...creds,
+      tankerkoenigKey: tk.trim(),
+      tankerkoenigApiKey: tk.trim(),
+    };
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_KEYS, JSON.stringify(normalized));
+    this.initSupabaseClient();
+    return normalized;
+  }
+
+  loadStoredSettings() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return {
+      fuelPreference: 'diesel', // 'diesel' | 'e5' | 'e10'
+      alertThresholdCent: 3.0,
+      homeWorkRouteActive: true,
+      pausedUntil: null, // ISO string if user clicked "Bin noch auf der Arbeit (30 Min pausieren)"
+      favoriteStationIds: ['station-jet-bismarck', 'station-hem-mehring'],
+      commuteMorningStart: '07:30',
+      commuteMorningEnd: '08:45',
+      commuteEveningStart: '16:30',
+      commuteEveningEnd: '18:45',
+    };
+  }
+
+  saveSettings(newSettings) {
+    this.userSettings = { ...this.userSettings, ...newSettings };
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(this.userSettings));
+
+    // Falls Supabase verbunden ist, synchronisiere mit /rest/v1/settings
+    if (this.supabase) {
+      this.supabase
+        .from('user_settings')
+        .upsert({
+          fuel_preference: this.userSettings.fuelPreference,
+          alert_threshold_cent: this.userSettings.alertThresholdCent,
+          home_work_route_active: this.userSettings.homeWorkRouteActive,
+          paused_until: this.userSettings.pausedUntil,
+        })
+        .then(() => console.log('Settings synced with Supabase'))
+        .catch((err) => console.warn('Supabase settings sync error:', err));
+    }
+
+    return this.userSettings;
+  }
+
+  loadStoredLaws() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.CONFIG);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [...INITIAL_LAWS_TAXES];
+  }
+
+  saveLaws(newLaws) {
+    this.lawsTaxes = newLaws;
+    localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(newLaws));
+
+    if (this.supabase) {
+      this.supabase
+        .from('laws_taxes')
+        .upsert(newLaws)
+        .catch((e) => console.warn('Supabase laws sync error:', e));
+    }
+    return this.lawsTaxes;
+  }
+
+  getActiveTaxReliefCent() {
+    return this.lawsTaxes
+      .filter((law) => law.isActive)
+      .reduce((sum, law) => sum + (law.discountCent || 0), 0);
+  }
+
+  async testTankerkoenig(key, lat = 50.9375, lng = 6.9603) {
+    if (!key || key.trim() === '') {
+      return { success: false, message: 'Bitte gib einen Tankerkönig API-Key ein.' };
+    }
+    try {
+      const res = await fetch(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lng}&rad=5&sort=dist&type=all&apikey=${key.trim()}`);
+      const data = await res.json();
+      if (data.ok) {
+        const count = data.stations ? data.stations.length : 0;
+        return { success: true, message: `Verbindung erfolgreich! ${count} Live-Tankstellen im Testbereich erfasst.` };
+      } else {
+        return { success: false, message: data.message || 'Tankerkönig API meldet einen Fehler (ungültiger Key?).' };
+      }
+    } catch (err) {
+      return { success: false, message: `Verbindungsfehler zur Tankerkönig API: ${err.message}` };
+    }
+  }
+
+  async testSupabase(url, key) {
+    if (!url || !key) {
+      return { success: false, message: 'Bitte Supabase Project URL und Anon Key eingeben.' };
+    }
+    try {
+      const client = createClient(url.trim(), key.trim());
+      const { data, error } = await client.from('stations').select('id').limit(1);
+      if (error) {
+        return { success: false, message: `Supabase Fehler: ${error.message} (Hast du schema.sql im SQL Editor ausgeführt?)` };
+      }
+      return { success: true, message: 'Supabase-Verbindung steht! Tabelle "stations" erfolgreich angesprochen.' };
+    } catch (err) {
+      return { success: false, message: `Verbindungsfehler zu Supabase: ${err.message}` };
+    }
+  }
+
+  /**
+   * Lädt alle Tankstellen inkl. aktueller Preise und Historie.
+   * Unterstützt Live-Abfrage via Tankerkönig-API bei hinterlegtem Key,
+   * sowie dynamische Generierung passgenauer Tankstellen um jeden Standort!
+   */
+  async getStationsWithPrices(fuelType = this.userSettings.fuelPreference, activeLocation = null) {
+    const activeReliefCent = this.getActiveTaxReliefCent();
+    const creds = this.getCredentials();
+
+    let stationList = [];
+    let isLive = false;
+
+    // 1. Live-Abruf über Tankerkönig falls Key hinterlegt und nicht Demo-Dummy
+    const tkKey = creds.tankerkoenigKey ? creds.tankerkoenigKey.trim() : '';
+    if (tkKey && tkKey !== '00000000-0000-0000-0000-000000000002' && tkKey.length > 20 && activeLocation) {
+      try {
+        const rad = Math.min(Math.max(activeLocation.radiusKm || 5, 1), 25);
+        const url = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${activeLocation.lat}&lng=${activeLocation.lng}&rad=${rad}&sort=dist&type=all&apikey=${tkKey}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.stations) && data.stations.length > 0) {
+          isLive = true;
+          stationList = data.stations.map((s, idx) => {
+            const rawPrice = s[fuelType];
+            const livePrice = typeof rawPrice === 'number' && rawPrice > 0 ? rawPrice : null;
+            return {
+              id: s.id || `tk-station-${idx}`,
+              tankerkoenig_id: s.id,
+              name: s.name,
+              brand: s.brand || 'Freie Station',
+              street: `${s.street || ''} ${s.houseNumber || ''}`.trim() || 'Straße unbekannt',
+              city: s.place || 'Deutschland',
+              postCode: s.postCode ? String(s.postCode) : '',
+              lat: s.lat,
+              lng: s.lng,
+              distanceKm: typeof s.dist === 'number' ? parseFloat(s.dist.toFixed(1)) : 2.5,
+              isOnCommuteRoute: true,
+              isOpen: s.isOpen !== false,
+              basePriceOffset: 0,
+              livePrice,
+            };
+          });
+        }
+      } catch (err) {
+        console.warn('Live Tankerkönig fetch fallback auf Simulation:', err);
+      }
+    }
+
+    // 2. Falls keine Live-Daten vorliegen, generiere realistische Stationen um den aktiven Standort!
+    if (!isLive || stationList.length === 0) {
+      stationList = generateStationsForLocation(activeLocation, fuelType);
+    }
+
+    return stationList.map((station) => {
+      // Hole oder erstelle Historie
+      const cacheKey = `${station.id}-${fuelType}`;
+      if (!this.cachedHistory.has(cacheKey)) {
+        this.cachedHistory.set(cacheKey, generateRealisticHistory(station, fuelType));
+      }
+      const history = this.cachedHistory.get(cacheKey);
+      
+      // Letzter Datenpunkt = aktueller Preis (bevorzuge Live-Preis wenn vorhanden)
+      const latestPoint = history[history.length - 1];
+      const baseCurrentPrice = station.livePrice || (latestPoint ? latestPoint.price : 1.699);
+      
+      // Gesetzliche Modifikation einrechnen
+      const effectiveCurrentPrice = parseFloat((baseCurrentPrice + (activeReliefCent / 100)).toFixed(3));
+
+      return {
+        ...station,
+        currentPrice: effectiveCurrentPrice,
+        nominalPrice: baseCurrentPrice,
+        fuelType,
+        history,
+        isFavorite: this.userSettings.favoriteStationIds.includes(station.id),
+      };
+    });
+  }
+
+  /**
+   * Registriert Web Push Token (nach Spezifikation: /rest/v1/push_subs POST)
+   */
+  async registerPushSubscription(subscription) {
+    try {
+      if (this.supabase) {
+        await this.supabase.from('push_subs').upsert({
+          endpoint: subscription.endpoint,
+          p256dh: JSON.stringify(subscription.toJSON ? subscription.toJSON().keys : {}),
+          auth: 'vapid_token',
+          created_at: new Date().toISOString(),
+        });
+      }
+      localStorage.setItem('kraftstoff_push_sub', JSON.stringify(subscription));
+      return { success: true };
+    } catch (e) {
+      console.warn('Failed to register push subscription:', e);
+      return { success: false, error: e.message };
+    }
+  }
+
+  /**
+   * 30 Minuten Alarm-Pausierung ("Bin noch auf der Arbeit")
+   */
+  pauseAlerts30Minutes() {
+    const pauseUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    return this.saveSettings({ pausedUntil: pauseUntil });
+  }
+
+  resumeAlerts() {
+    return this.saveSettings({ pausedUntil: null });
+  }
+
+  isAlertsPaused() {
+    if (!this.userSettings.pausedUntil) return false;
+    const expiry = new Date(this.userSettings.pausedUntil).getTime();
+    return Date.now() < expiry;
+  }
+}
+
+export const dataService = new DataService();

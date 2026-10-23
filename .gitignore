@@ -1,0 +1,44 @@
+# Logs & Caches
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+.tempmediaStorage
+
+# Dependencies & Build Output
+node_modules
+dist
+dist-ssr
+.cache
+.vite
+
+# Local Environment & Secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# User Backups & Private iCloud exports
+kraftstoff_daten.json
+*.backup.json
+
+# macOS & Editor metadata
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Deployment providers
+.vercel
