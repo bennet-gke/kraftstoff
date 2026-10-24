@@ -1,6 +1,6 @@
-// Service Worker for KRAFTSTOFF Tankpreis-App
-const CACHE_NAME = 'tankradar-v1';
-const ASSETS_TO_CACHE = [
+// Service Worker for KRAFTSTOFF Tankpreis-App (v3 - Network-First for HTML to prevent stale white screen)
+const CACHE_NAME = 'kraftstoff-v3-stable';
+const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
@@ -9,14 +9,14 @@ const ASSETS_TO_CACHE = [
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
-        console.warn('Precache failed for some assets:', err);
+      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
+        console.warn('Precache notice:', err);
       });
     })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -29,28 +29,84 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Cache-First with Network Fallback for static assets, Network-First for API
+// Fetch Strategy:
+// 1. Navigation (HTML): Network-First with short timeout, fallback to cache
+// 2. Static Assets (/assets/): Cache-First with Network fallback
+// 3. APIs: Network-Only (bypass SW)
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   
-  // Ignore API requests or Supabase/Tankerkönig requests for standard cache
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/rest/') || url.origin.includes('supabase') || url.origin.includes('tankerkoenig')) {
+
+  // Ignore external APIs, geocoders, and cloud sync
+  if (
+    url.pathname.startsWith('/rest/') ||
+    url.pathname.startsWith('/api/') ||
+    url.origin.includes('supabase') ||
+    url.origin.includes('tankerkoenig') ||
+    url.origin.includes('openstreetmap') ||
+    url.origin.includes('arcgisonline') ||
+    url.origin.includes('open-meteo') ||
+    url.origin.includes('komoot')
+  ) {
     return;
   }
 
+  // 1. HTML Navigation Requests (Network-First: Immer neueste Version holen, damit Asset-Hashes übereinstimmen)
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cached = await caches.match(event.request);
+          if (cached) return cached;
+          return caches.match('/');
+        })
+    );
+    return;
+  }
+
+  // 2. Static Hashed Assets (/assets/)
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        });
+      })
+    );
+    return;
+  }
+
+  // 3. Alle weiteren statischen Anfragen (Stale-While-Revalidate)
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-      return fetch(event.request).catch(() => {
-        // Fallback if offline
-        return caches.match('/');
-      });
+    caches.match(event.request).then((cached) => {
+      const fetchPromise = fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => cached);
+
+      return cached || fetchPromise;
     })
   );
 });
@@ -97,7 +153,6 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   if (event.action === 'pause_30') {
-    // Notify clients that user requested 30 min snooze
     event.waitUntil(
       self.clients.matchAll({ type: 'window' }).then((clientList) => {
         for (const client of clientList) {
@@ -108,7 +163,6 @@ self.addEventListener('notificationclick', (event) => {
     return;
   }
 
-  // Open or focus the app window
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {

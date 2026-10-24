@@ -1,6 +1,6 @@
 {
   "framework": "vite",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+    { "source": "/((?!assets/|sw\\.js|favicon\\.svg|manifest\\.json|icon\\.svg).*)", "destination": "/index.html" }
   ]
 }

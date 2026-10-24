@@ -13,6 +13,7 @@
     
     <!-- iOS Web App tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="TankRadar" />
     <link rel="apple-touch-icon" href="/icon.svg" />
@@ -26,15 +27,62 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Elegante Sofort-Ladeanzeige (verhindert weißen Bildschirm bei Erstladung) -->
+      <div id="app-loading-placeholder" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 1.5rem; text-align: center;">
+        <div style="width: 44px; height: 44px; background: #0F172A; color: #FFFFFF; border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(15,23,42,0.18); margin-bottom: 1rem;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 22V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v18"></path>
+            <path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 4 0v-6.998a2 2 0 0 0-.59-1.42L18 5"></path>
+          </svg>
+        </div>
+        <h3 style="font-size: 1.05rem; font-weight: 800; color: #0F172A; letter-spacing: -0.01em; margin-bottom: 0.25rem;">KRAFTSTOFF</h3>
+        <p style="font-size: 0.78rem; color: #64748B; font-weight: 500;">Intelligenter Tankradar wird geladen...</p>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.jsx"></script>
+    
     <script>
-      // Register Service Worker for PWA & Push
+      // Markiere Render-Status
+      window.__kraftstoff_mounted = false;
+
+      // Fail-Safe Watchdog: Falls ein alter Service-Worker-Cache die App blockiert,
+      // bereinige die Caches automatisch nach 2,8 Sekunden und lade die frische Version!
+      setTimeout(function() {
+        if (!window.__kraftstoff_mounted) {
+          console.warn('App nicht gestartet, alter Cache wird bereinigt...');
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              for (var i = 0; i < regs.length; i++) regs[i].unregister();
+            });
+          }
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              for (var j = 0; j < keys.length; j++) caches.delete(keys[j]);
+            });
+          }
+          window.location.reload(true);
+        }
+      }, 2800);
+
+      // Service Worker Registrierung mit Auto-Update
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((reg) => console.log('Service Worker registered:', reg.scope))
-            .catch((err) => console.log('Service Worker registration failed:', err));
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            reg.addEventListener('updatefound', function() {
+              var newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', function() {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    window.location.reload();
+                  }
+                });
+              }
+            });
+          }).catch(function(err) {
+            console.warn('SW notice:', err);
+          });
         });
       }
     </script>

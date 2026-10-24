@@ -127,7 +127,12 @@ export default function App() {
     initAndTrainModel(15).catch((err) => console.log('TF init background:', err));
 
     // Falls noch kein individueller Standort gesetzt wurde, frage GPS beim ersten Start automatisch an
-    const hasCustomLoc = localStorage.getItem('kraftstoff_custom_location_set');
+    let hasCustomLoc = false;
+    try {
+      hasCustomLoc = !!localStorage.getItem('kraftstoff_custom_location_set');
+    } catch {
+      hasCustomLoc = false;
+    }
     if (!hasCustomLoc && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
@@ -649,7 +654,7 @@ export default function App() {
                 {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
                 {baseStation && (
                   <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.4rem' }}>
-                    • Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{baseStation.currentPrice.toFixed(3)} €</span>)
+                    • Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{Number(baseStation?.currentPrice || 1.699).toFixed(3)} €</span>)
                   </span>
                 )}
               </div>

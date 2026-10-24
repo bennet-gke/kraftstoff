@@ -10,4 +10,8 @@ createRoot(document.getElementById('root')).render(
       <App />
     </ErrorBoundary>
   </StrictMode>,
-)
+);
+
+// Signalisiere dem Fail-Safe Watchdog in index.html den erfolgreichen Start
+window.__kraftstoff_mounted = true;
+
