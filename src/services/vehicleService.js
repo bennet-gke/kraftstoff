@@ -65,7 +65,11 @@ class VehicleService {
 
   saveVehicles(newVehicles) {
     this.vehicles = newVehicles;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newVehicles));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newVehicles));
+    } catch (e) {
+      console.warn('Could not persist vehicles:', e);
+    }
     return this.vehicles;
   }
 
@@ -75,7 +79,11 @@ class VehicleService {
 
   setActiveVehicleId(id) {
     this.activeVehicleId = id;
-    localStorage.setItem(ACTIVE_VEHICLE_KEY, id);
+    try {
+      localStorage.setItem(ACTIVE_VEHICLE_KEY, id);
+    } catch (e) {
+      console.warn('Could not persist active vehicle ID:', e);
+    }
     return this.getActiveVehicle();
   }
 

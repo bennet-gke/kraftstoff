@@ -30,7 +30,9 @@ class BackupService {
 
   setCustomPath(newPath) {
     this.customPath = (newPath || DEFAULT_MAC_PATH).trim();
-    localStorage.setItem(STORAGE_KEY_PATH, this.customPath);
+    try {
+      localStorage.setItem(STORAGE_KEY_PATH, this.customPath);
+    } catch {}
     return this.customPath;
   }
 

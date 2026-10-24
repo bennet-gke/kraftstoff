@@ -190,7 +190,11 @@ class LocationService {
       radiusKm: typeof loc.radiusKm === 'number' && !isNaN(loc.radiusKm) ? loc.radiusKm : parseFloat(loc.radiusKm) || 5.0,
     }));
     this.locations = sanitized;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+    } catch (e) {
+      console.warn('Could not persist locations:', e);
+    }
     return this.locations;
   }
 
@@ -201,8 +205,12 @@ class LocationService {
 
   setActiveLocationId(id) {
     this.activeLocationId = id || (this.locations[0]?.id || INITIAL_LOCATIONS[0].id);
-    localStorage.setItem(ACTIVE_ROUTE_KEY, this.activeLocationId);
-    localStorage.setItem('kraftstoff_custom_location_set', 'true');
+    try {
+      localStorage.setItem(ACTIVE_LOCATION_KEY, this.activeLocationId);
+      localStorage.setItem('kraftstoff_custom_location_set', 'true');
+    } catch (e) {
+      console.warn('Could not persist active location ID:', e);
+    }
     return this.getActiveLocation();
   }
 

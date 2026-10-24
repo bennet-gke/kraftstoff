@@ -90,7 +90,11 @@ class RouteService {
 
   saveRoutes(newRoutes) {
     this.routes = newRoutes;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newRoutes));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newRoutes));
+    } catch (e) {
+      console.warn('Could not persist routes:', e);
+    }
     return this.routes;
   }
 
@@ -101,10 +105,14 @@ class RouteService {
 
   setActiveRouteId(id) {
     this.activeRouteId = id;
-    if (id) {
-      localStorage.setItem(ACTIVE_ROUTE_KEY, id);
-    } else {
-      localStorage.removeItem(ACTIVE_ROUTE_KEY);
+    try {
+      if (id) {
+        localStorage.setItem(ACTIVE_ROUTE_KEY, id);
+      } else {
+        localStorage.removeItem(ACTIVE_ROUTE_KEY);
+      }
+    } catch (e) {
+      console.warn('Could not persist active route ID:', e);
     }
     return this.getActiveRoute();
   }
