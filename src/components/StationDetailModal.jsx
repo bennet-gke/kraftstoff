@@ -166,6 +166,18 @@ export default function StationDetailModal({
             </div>
           </div>
 
+          {baseStation && (
+            <div style={{ background: '#FFFFFF', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '0.65rem', fontSize: '0.74rem', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+              <div>
+                <span>Vergleichs-Basis: </span>
+                <strong style={{ color: '#0F172A' }}>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono" style={{ fontWeight: 700 }}>{baseStation.currentPrice.toFixed(3)} €</span>)
+              </div>
+              <div style={{ color: detour.priceDiffCent > 0 ? '#059669' : '#DC2626', fontWeight: 700 }}>
+                {detour.priceDiffCent > 0 ? `-${detour.priceDiffCent.toFixed(1)} ct/L günstiger` : `+${Math.abs(detour.priceDiffCent).toFixed(1)} ct/L teurer`}
+              </div>
+            </div>
+          )}
+
           <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.85rem' }}>
             {detour.reasoning}
           </p>
@@ -189,7 +201,7 @@ export default function StationDetailModal({
               <strong className="num-mono" style={{ color: '#059669', fontSize: '1rem' }}>
                 +{detour.grossSavingsEuro.toFixed(2)} €
               </strong>
-              <span style={{ color: '#64748B', display: 'block' }}>({detour.priceDiffCent} ct/L bei {simLiters} L)</span>
+              <span style={{ color: '#64748B', display: 'block' }}>({detour.priceDiffCent} ct/L × {simLiters} L)</span>
             </div>
 
             <div>

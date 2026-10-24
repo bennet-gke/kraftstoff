@@ -208,14 +208,27 @@ export default function TypicalWeekChart({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <Calendar size={16} color="#0F172A" />
             <h3 style={{ fontSize: '0.98rem', fontWeight: 700, color: '#0F172A' }}>
               Die „Typische Woche“: Dynamischer Preiszyklus über die Zeit
             </h3>
+            <span
+              style={{
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                padding: '0.15rem 0.45rem',
+                borderRadius: '4px',
+                background: '#EFF6FF',
+                color: '#1E40AF',
+                border: '1px solid #BFDBFE',
+              }}
+            >
+              📍 Basis: {baseFuelPrice.toFixed(3)} €/L (Bester Preis in deiner Region)
+            </span>
           </div>
-          <p style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.15rem' }}>
-            Aggregierter Wochenverlauf (Mo 00:00 bis So 23:59 Uhr) • Erkennt wiederkehrende Hoch- & Tiefzeiten
+          <p style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.2rem' }}>
+            Basiert direkt auf dem <strong>realen Preisniveau deines ausgewählten Bereichs ({baseFuelPrice.toFixed(3)} €/L)</strong>, überlagert mit dem empirischen 7-Tage-Rhythmus (Bundeskartellamt & Markttransparenzstelle).
           </p>
         </div>
 

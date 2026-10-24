@@ -162,50 +162,142 @@ export default function StationCard({
         </div>
       </div>
 
-      {/* 2. RENTABILITÄTS-BERECHNUNG: Lohnt sich der Weg? */}
-      {baseStation && baseStation.id !== station.id && (
+      {/* 2. WIRTSCHAFTLICHKEITS-CHECK: LITERPREIS vs. MEHRWEG KOMBINATION */}
+      {baseStation && baseStation.id === station.id ? (
         <div
           style={{
-            background: detour.isProfitable ? '#ECFDF5' : '#FFF1F2',
-            border: `1px solid ${detour.isProfitable ? '#A7F3D0' : '#FECDD3'}`,
-            borderRadius: '6px',
-            padding: '0.45rem 0.65rem',
+            background: '#F8FAFC',
+            border: '1px solid #E2E8F0',
+            borderRadius: '8px',
+            padding: '0.55rem 0.75rem',
             fontSize: '0.74rem',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: '0.5rem',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Calculator size={13} color={detour.isProfitable ? '#059669' : '#DC2626'} />
-            <span style={{ fontWeight: 600, color: '#0F172A' }}>
-              {detourMode === 'route_corridor'
-                ? (detour.isProfitable ? 'Route-Abstecher lohnt sich:' : 'Route-Abstecher lohnt nicht:')
-                : (detour.isProfitable ? 'Fahrt lohnt sich:' : 'Fahrt lohnt sich nicht:')}
-            </span>
-            <span style={{ color: '#475569' }}>
-              {detour.totalDetourKm > 0
-                ? (detourMode === 'route_corridor'
-                    ? `+${detour.totalDetourKm} km Zusatzweg an Strecke`
-                    : `+${detour.totalDetourKm} km Hin- & Rückweg`)
-                : 'Direkt vor Ort'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <span style={{ fontSize: '0.85rem' }}>📍</span>
+            <div>
+              <span style={{ fontWeight: 700, color: '#0F172A' }}>Basistankstelle</span>
+              <span style={{ color: '#64748B', marginLeft: '0.35rem' }}>
+                (Nächste Station: {station.distanceKm} km • Referenz für Mehrweg & Ersparnis)
+              </span>
+            </div>
+          </div>
+          <span className="badge badge-gray" style={{ fontSize: '0.66rem', fontWeight: 700, padding: '0.15rem 0.45rem' }}>
+            Referenz vor Ort
+          </span>
+        </div>
+      ) : baseStation && baseStation.id !== station.id ? (
+        <div
+          style={{
+            background: detour.isProfitable ? '#F0FDF4' : '#FEF2F2',
+            border: `1px solid ${detour.isProfitable ? '#BBF7D0' : '#FECACA'}`,
+            borderRadius: '8px',
+            padding: '0.65rem 0.75rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.45rem',
+          }}
+        >
+          {/* Kopfzeile: Fazit-Badge + Netto-Ergebnis */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Calculator size={14} color={detour.isProfitable ? '#059669' : '#DC2626'} />
+              <span style={{ fontWeight: 700, fontSize: '0.78rem', color: detour.isProfitable ? '#166534' : '#991B1B' }}>
+                {detour.isProfitable
+                  ? `Fahrt lohnt sich! (+${detour.netSavingsEuro.toFixed(2)} € Reingewinn)`
+                  : `Lohnt sich nicht (${detour.netSavingsEuro.toFixed(2)} € Verlust)`}
+              </span>
+            </div>
+            <span
+              className="num-mono"
+              style={{
+                fontWeight: 800,
+                fontSize: '0.82rem',
+                color: detour.isProfitable ? '#059669' : '#DC2626',
+                background: '#FFFFFF',
+                padding: '0.15rem 0.45rem',
+                borderRadius: '4px',
+                border: `1px solid ${detour.isProfitable ? '#86EFAC' : '#FCA5A5'}`,
+              }}
+            >
+              {detour.netSavingsEuro > 0 ? `+${detour.netSavingsEuro.toFixed(2)} € Netto` : `${detour.netSavingsEuro.toFixed(2)} € Verlust`}
             </span>
           </div>
 
+          {/* 2 Spalten: Literpreis-Differenz an Zapfsäule vs. Fahrt- & Spritkosten */}
           <div
-            className="num-mono"
             style={{
-              fontWeight: 800,
-              fontSize: '0.82rem',
-              color: detour.isProfitable ? '#059669' : '#DC2626',
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '0.5rem',
+              background: '#FFFFFF',
+              padding: '0.45rem 0.6rem',
+              borderRadius: '6px',
+              border: '1px solid #E2E8F0',
+              fontSize: '0.72rem',
             }}
           >
-            {detour.netSavingsEuro > 0
-              ? `+${detour.netSavingsEuro.toFixed(2)} € Netto`
-              : `${detour.netSavingsEuro.toFixed(2)} € Verlust`}
+            {/* Spalte 1: Literpreis & Zapfsäule */}
+            <div>
+              <div style={{ color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                <span>⛽ Literpreis ({fillLiters} L Tankfüllung)</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', marginTop: '0.15rem' }}>
+                <strong
+                  className="num-mono"
+                  style={{
+                    fontSize: '0.85rem',
+                    color: detour.priceDiffCent > 0 ? '#059669' : '#DC2626',
+                  }}
+                >
+                  {detour.priceDiffCent > 0 ? `-${detour.priceDiffCent.toFixed(1)} ct/L` : `+${Math.abs(detour.priceDiffCent).toFixed(1)} ct/L`}
+                </strong>
+                <span style={{ color: '#475569', fontSize: '0.68rem' }}>
+                  vs. Basis ({baseStation.currentPrice.toFixed(3)} €)
+                </span>
+              </div>
+              <div style={{ color: detour.grossSavingsEuro >= 0 ? '#059669' : '#DC2626', fontWeight: 600, fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                {detour.grossSavingsEuro >= 0 ? `+${detour.grossSavingsEuro.toFixed(2)} € an Säule` : `${detour.grossSavingsEuro.toFixed(2)} € an Säule`}
+              </div>
+            </div>
+
+            {/* Spalte 2: Mehrweg & Spritkosten */}
+            <div style={{ borderLeft: '1px solid #F1F5F9', paddingLeft: '0.5rem' }}>
+              <div style={{ color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                <span>🚗 Fahrt ({detourMode === 'route_corridor' ? 'Zusatzweg' : 'Hin- & Rückfahrt'})</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.3rem', marginTop: '0.15rem' }}>
+                <strong className="num-mono" style={{ fontSize: '0.85rem', color: '#0F172A' }}>
+                  +{detour.totalDetourKm} km
+                </strong>
+                <span style={{ color: '#64748B', fontSize: '0.68rem' }}>
+                  ({consumption} L/100km)
+                </span>
+              </div>
+              <div style={{ color: '#DC2626', fontWeight: 600, fontSize: '0.7rem', marginTop: '0.1rem' }}>
+                -{detour.fuelCostDetourEuro.toFixed(2)} € Spritkosten
+              </div>
+            </div>
+          </div>
+
+          {/* Transparenter Erklärsatz */}
+          <div style={{ fontSize: '0.71rem', color: '#475569', lineHeight: 1.35 }}>
+            {detour.isProfitable ? (
+              <span>
+                💡 <strong>Trotz {detour.totalDetourKm} km Mehrweg rentabel:</strong> Du sparst durch die {detour.priceDiffCent.toFixed(1)} ct/L weniger {detour.grossSavingsEuro.toFixed(2)} € an der Zapfsäule. Die Fahrt verbraucht nur {detour.fuelCostDetourEuro.toFixed(2)} € Sprit.
+              </span>
+            ) : (
+              <span>
+                ⚠️ <strong>Mehrweg frisst Ersparnis auf:</strong> Der Umweg von {detour.totalDetourKm} km kostet {detour.fuelCostDetourEuro.toFixed(2)} € Sprit. Das ist {detour.grossSavingsEuro > 0 ? `mehr als die ${detour.grossSavingsEuro.toFixed(2)} € Ersparnis an der Zapfsäule` : 'teurer als die Basistankstelle vor Ort'}.
+              </span>
+            )}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* 3. MONTE-CARLO PREISÄNDERUNGS-PROGNOSE BIS ZUR ANKUNFT */}
       <div

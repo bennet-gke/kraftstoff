@@ -593,28 +593,27 @@ export default function App() {
           style={{ display: 'none' }}
         />
 
-        {/* Haupt-Synchronisationsleiste beim Start der App */}
+        {/* Schlanke, aufgeräumte Synchronisations- und Statusleiste */}
         <div
           className="clean-card"
           style={{
             marginBottom: '1rem',
-            padding: '0.85rem 1.15rem',
-            background: 'linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%)',
+            padding: '0.65rem 1rem',
+            background: '#FFFFFF',
             border: '1px solid #E2E8F0',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             flexWrap: 'wrap',
-            gap: '0.85rem',
-            boxShadow: '0 1px 4px rgba(15,23,42,0.04)',
+            gap: '0.6rem',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div
               style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '10px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
                 background: '#0F172A',
                 color: '#FFFFFF',
                 display: 'flex',
@@ -623,21 +622,21 @@ export default function App() {
                 flexShrink: 0,
               }}
             >
-              <Cloud size={20} color="#38BDF8" />
+              <Cloud size={16} color="#38BDF8" />
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                <span style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0F172A' }}>
-                  KRAFTSTOFF Synchronisation
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A' }}>
+                  iCloud Drive & Datenstand
                 </span>
-                <span className="badge badge-gray" style={{ fontSize: '0.66rem' }}>
-                  iCloud Drive & Lokal
+                <span className="badge badge-gray" style={{ fontSize: '0.64rem', padding: '0.1rem 0.35rem' }}>
+                  Live synchronisiert
                 </span>
                 {notifPermission !== 'granted' && (
                   <button
                     onClick={() => setIsPushModalOpen(true)}
                     className="badge badge-neutral"
-                    style={{ fontSize: '0.66rem', cursor: 'pointer', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                    style={{ fontSize: '0.64rem', cursor: 'pointer', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
                     title="Mitteilungen einschalten"
                   >
                     <BellRing size={10} color="#0284C7" />
@@ -645,47 +644,42 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '0.2rem' }}>
-                Aktiv: <strong>{activeLocation?.name}</strong> ({activeLocation?.radiusKm} km) •{' '}
-                <strong>{activeVehicle?.name}</strong> ({activeVehicle?.consumptionL100km} L) •{' '}
-                <span style={{ textTransform: 'uppercase', fontWeight: 600 }}>{selectedFuel}</span>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.1rem' }}>
+                {activeLocation?.name} ({activeLocation?.radiusKm} km) • {activeVehicle?.name} ({activeVehicle?.consumptionL100km} L) • <span style={{ textTransform: 'uppercase', fontWeight: 600 }}>{selectedFuel}</span>
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {/* Der zentrale "Aus iCloud aktualisieren" Button (Direkt-Sync ohne Dialog!) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+            {/* 1-Klick Direkt-Sync aus iCloud Drive */}
             <button
               onClick={handleSyncFromICloud}
               disabled={isSyncing}
-              className="btn btn-primary"
+              className="btn btn-primary btn-sm"
               style={{
-                fontSize: '0.82rem',
-                padding: '0.55rem 0.95rem',
+                fontSize: '0.76rem',
+                padding: '0.35rem 0.75rem',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.45rem',
-                background: '#0F172A',
-                color: '#FFFFFF',
-                boxShadow: '0 2px 6px rgba(15,23,42,0.18)',
+                gap: '0.35rem',
                 cursor: isSyncing ? 'not-allowed' : 'pointer',
               }}
-              title="Liest kraftstoff_daten.json direkt aus deinem iCloud Drive und aktualisiert alle Daten und Preise sofort"
+              title="Aktualisiert alle Daten und Preise sofort aus deinem iCloud Drive"
             >
-              <Upload size={14} color="#38BDF8" className={isSyncing ? 'animate-spin' : ''} />
-              <span>{isSyncing ? 'Synchronisiere...' : 'Aus iCloud aktualisieren'}</span>
+              <Upload size={12} color="#38BDF8" className={isSyncing ? 'animate-spin' : ''} />
+              <span>{isSyncing ? 'Lade...' : 'Aus iCloud laden'}</span>
             </button>
 
-            {/* In iCloud sichern Button (Direkt-Sync ohne Download-Dialog!) */}
+            {/* In iCloud sichern */}
             <button
               onClick={handleSyncToICloud}
               disabled={isSyncing}
               className="btn btn-secondary btn-sm"
-              style={{ fontSize: '0.78rem', padding: '0.5rem 0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-              title="Speichert alle aktuellen Orte, Autos & Einstellungen direkt in deine iCloud Drive Datei"
+              style={{ fontSize: '0.76rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+              title="Speichert alle aktuellen Orte, Autos & Einstellungen in deine iCloud Drive Datei"
             >
-              <Download size={13} color="#059669" />
-              <span>In iCloud sichern</span>
+              <Download size={12} color="#059669" />
+              <span>Sichern</span>
             </button>
 
             {/* Preise neu abrufen */}
@@ -693,10 +687,10 @@ export default function App() {
               onClick={() => loadData(selectedFuel)}
               disabled={isRefreshing}
               className="btn btn-secondary btn-sm"
-              style={{ fontSize: '0.78rem', padding: '0.5rem 0.7rem' }}
+              style={{ fontSize: '0.76rem', padding: '0.35rem 0.6rem' }}
               title="Preise vom Server neu abrufen"
             >
-              <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+              <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
             </button>
           </div>
         </div>
@@ -728,9 +722,7 @@ export default function App() {
           </div>
         )}
 
-
-
-        {/* Steuerungsleiste: Fahrzeug, Standort/Radius, Route, Sorte, Heimweg */}
+        {/* Aufgeräumte zentrale Steuerungsleiste (Fahrzeug, Standort, Radius, Route, Kraftstoff, Sortierung) */}
         <RouteScheduleBar
           selectedFuel={selectedFuel}
           onSelectFuel={handleSelectFuel}
@@ -745,6 +737,9 @@ export default function App() {
           activeVehicle={activeVehicle}
           onOpenVehicleModal={() => setIsVehicleModalOpen(true)}
           activeLocation={activeLocation}
+          locations={locations}
+          onSelectLocation={handleSelectLocation}
+          onUpdateRadius={handleUpdateRadius}
           activeRoute={activeRoute}
           onOpenLocationRouteModal={() => setIsLocRouteModalOpen(true)}
           onLocateGps={handleLocateGps}
@@ -764,7 +759,7 @@ export default function App() {
         {/* TAB 1: RADAR & TANKSTELLEN-LISTE */}
         {activeTab === 'stations' && (
           <>
-            {/* Top-Empfehlung Banner */}
+            {/* Top-Empfehlung Banner mit kombinierter Literpreis- & Mehrweg-Rechnung */}
             {bestStation && (
               <div
                 className="clean-card"
@@ -785,19 +780,24 @@ export default function App() {
                       {bestStation.isOnRouteCorridor && (
                         <span className="badge badge-blue">Auf deiner aktiven Route</span>
                       )}
+                      {baseStation && bestStation.id !== baseStation.id && bestStation.detour?.priceDiffCent > 0 && (
+                        <span className="badge badge-favorable" style={{ fontWeight: 700 }}>
+                          -{bestStation.detour.priceDiffCent.toFixed(1)} ct/L günstiger
+                        </span>
+                      )}
                     </div>
 
                     <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A' }}>
                       {bestStation.name}
                     </h2>
-                    <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '0.15rem' }}>
+                    <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.4 }}>
                       {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
-                      {bestStation.detour?.isProfitable ? (
+                      {bestStation.detour?.isProfitable && baseStation && bestStation.id !== baseStation.id ? (
                         <strong style={{ color: '#059669' }}>
-                          Fahrt lohnt sich! Netto-Gewinn: +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} €
+                          Fahrt lohnt sich! +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Reingewinn ({bestStation.detour.formulaSummary})
                         </strong>
                       ) : (
-                        <span>Niedrigster Zapfsäulenpreis</span>
+                        <span>Niedrigster Zapfsäulenpreis vor Ort</span>
                       )}
                     </p>
                   </div>
@@ -825,108 +825,25 @@ export default function App() {
               </div>
             )}
 
-            {/* Schnellwechsler für Standorte & Radius */}
+            {/* Aufgeräumter Listenkopf mit klarer Referenz-Station */}
             <div
-              className="clean-card"
               style={{
-                marginBottom: '1rem',
-                padding: '0.65rem 0.85rem',
                 display: 'flex',
-                flexWrap: 'wrap',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                gap: '0.75rem',
-                background: '#FFFFFF',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+                marginBottom: '0.85rem',
+                padding: '0 0.2rem',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.74rem', color: '#64748B', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <MapPin size={13} color="#0F172A" />
-                  <span>Standort:</span>
-                </span>
-                {locations.map((loc) => {
-                  const isActive = loc.id === activeLocationId;
-                  return (
-                    <button
-                      key={loc.id}
-                      onClick={() => handleSelectLocation(loc.id, loc)}
-                      className="btn"
-                      style={{
-                        padding: '0.25rem 0.65rem',
-                        fontSize: '0.74rem',
-                        borderRadius: '20px',
-                        background: isActive ? '#0F172A' : '#F1F5F9',
-                        color: isActive ? '#FFFFFF' : '#475569',
-                        border: 'none',
-                        fontWeight: isActive ? 700 : 500,
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {loc.name}
-                    </button>
-                  );
-                })}
-                <button
-                  onClick={() => setIsLocRouteModalOpen(true)}
-                  style={{
-                    padding: '0.25rem 0.55rem',
-                    fontSize: '0.72rem',
-                    borderRadius: '20px',
-                    background: 'transparent',
-                    border: '1px dashed #CBD5E1',
-                    color: '#64748B',
-                    cursor: 'pointer',
-                  }}
-                  title="Neuen Ort anlegen"
-                >
-                  + Ort anlegen
-                </button>
-                <button
-                  onClick={handleLocateGps}
-                  style={{
-                    padding: '0.25rem 0.55rem',
-                    fontSize: '0.72rem',
-                    borderRadius: '20px',
-                    background: '#EFF6FF',
-                    border: '1px solid #BFDBFE',
-                    color: '#1E40AF',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.25rem',
-                    fontWeight: 600,
-                  }}
-                  title="Aktuellen GPS-Standort orten & übernehmen"
-                >
-                  <Compass size={11} color="#0284C7" />
-                  <span>GPS orten</span>
-                </button>
-              </div>
-
-              {/* Radius-Slider für den aktiven Standort */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem' }}>
-                <span style={{ color: '#64748B' }}>Suchradius:</span>
-                <input
-                  type="range"
-                  min="2"
-                  max="25"
-                  step="1"
-                  value={Number(activeLocation?.radiusKm || 5)}
-                  onChange={(e) => activeLocation?.id && handleUpdateRadius(activeLocation.id, parseFloat(e.target.value) || 5)}
-                  style={{ width: '90px', accentColor: '#0F172A', cursor: 'pointer' }}
-                />
-                <strong className="num-mono" style={{ color: '#0F172A', minWidth: '38px' }}>
-                  {Number(activeLocation?.radiusKm || 5)} km
-                </strong>
-              </div>
-            </div>
-
-            {/* Listenkopf */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
               <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
                 {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
-                {activeRoute && ` • Korridor: ${activeRoute.name}`}
+                {baseStation && (
+                  <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.5rem' }}>
+                    • Referenz-Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{baseStation.currentPrice.toFixed(3)} €</span>)
+                  </span>
+                )}
               </div>
 
               <button
@@ -934,8 +851,9 @@ export default function App() {
                 onClick={() => loadData(selectedFuel)}
                 disabled={isRefreshing}
                 title="Preise aktualisieren"
+                style={{ padding: '0.25rem 0.55rem', fontSize: '0.74rem' }}
               >
-                <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+                <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
                 <span>Aktualisieren</span>
               </button>
             </div>

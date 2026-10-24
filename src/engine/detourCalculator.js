@@ -109,6 +109,10 @@ export function calculateDetourProfitability({
   }
 
   return {
+    fillLiters: safeLiters,
+    consumptionL100km: safeConsumption,
+    basePrice: safeBasePrice,
+    targetPrice: safeTargetPrice,
     priceDiffPerLiter: parseFloat(priceDiffPerLiter.toFixed(3)),
     priceDiffCent: parseFloat(priceDiffCent.toFixed(1)),
     totalDetourKm: parseFloat(totalDetourKm.toFixed(1)),
@@ -125,5 +129,8 @@ export function calculateDetourProfitability({
     verdictLabel,
     badgeColor,
     reasoning,
+    formulaSummary: priceDiffPerLiter > 0
+      ? `${priceDiffCent.toFixed(1)} ct/L günstiger × ${safeLiters} L = +${grossSavingsEuro.toFixed(2)} € an Säule abzüglich ${fuelCostDetourEuro.toFixed(2)} € Sprit (${totalDetourKm.toFixed(1)} km) = ${netSavingsEuro > 0 ? '+' : ''}${netSavingsEuro.toFixed(2)} € Netto`
+      : `${Math.abs(priceDiffCent).toFixed(1)} ct/L teurer + ${fuelCostDetourEuro.toFixed(2)} € Sprit (${totalDetourKm.toFixed(1)} km Mehrweg) = -${Math.abs(netSavingsEuro).toFixed(2)} € Mehrkosten`,
   };
 }
