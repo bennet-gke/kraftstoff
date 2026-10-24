@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Car, Plus, Trash2, X, Check, Fuel, Gauge, Sliders, Download } from 'lucide-react';
+import { Car, Plus, Trash2, X, Check, Fuel, Gauge, Download } from 'lucide-react';
 import { vehicleService } from '../services/vehicleService';
 import { backupService } from '../services/backupService';
 

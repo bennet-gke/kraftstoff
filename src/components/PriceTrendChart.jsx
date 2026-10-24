@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { TrendingUp, Activity, Layers } from 'lucide-react';
-import { calculateAdaptiveMovingAverage, calculateStandardDeviation, calculateAdaptiveWindowHours } from '../engine/adaptiveAverage';
+import { TrendingUp } from 'lucide-react';
+import { calculateStandardDeviation } from '../engine/adaptiveAverage';
 
 export default function PriceTrendChart({
   history = [],

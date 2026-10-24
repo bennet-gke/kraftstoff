@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Cpu, Sparkles, RefreshCw, Layers, CheckCircle2, AlertCircle, ArrowRight, TrendingUp, TrendingDown, Clock, ShieldCheck, Zap, AlertTriangle, Car, Gauge, Database, RotateCcw } from 'lucide-react';
+import { Cpu, Sparkles, RefreshCw, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Clock, ShieldCheck, Zap, AlertTriangle, Car, Database, RotateCcw } from 'lucide-react';
 import {
-  initAndTrainModel,
   subscribeMLStatus,
   predictPriceScore,
   continuouslyTrainOnHistory,
   predict24HourCurve,
   detectBrandJumpLeaders,
   calculateOptimalTankStrategy,
-  saveModelToStorage,
   resetModelStorage,
 } from '../engine/mlModel';
 
@@ -180,6 +178,13 @@ export default function MachineLearningPanel({
               <Database size={12} /> IndexedDB Aktiv
             </strong>
             <span style={{ color: '#64748B', display: 'block' }}>Permanent gesichert</span>
+          </div>
+          <div>
+            <span style={{ color: '#94A3B8', display: 'block', fontSize: '0.7rem' }}>Marktregeln & KI</span>
+            <strong style={{ color: isTwelveClockActive ? '#059669' : '#0F172A', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              {isTwelveClockActive ? '12-Uhr-Regel Aktiv' : 'Standard'}
+            </strong>
+            <span style={{ color: '#64748B', display: 'block' }}>{activeLawsCount} Regeln integriert</span>
           </div>
         </div>
       </div>

@@ -475,7 +475,6 @@ class DataService {
    * sowie dynamische Generierung passgenauer Tankstellen um jeden Standort!
    */
   async getStationsWithPrices(fuelType = this.userSettings.fuelPreference, activeLocation = null) {
-    const activeReliefCent = this.getActiveTaxReliefCent();
     const creds = this.getCredentials();
 
     let stationList = [];

@@ -173,7 +173,7 @@ export default function HeatmapChart({ history = [], fuelType = 'diesel', statio
             </h3>
           </div>
           <p style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.15rem' }}>
-            Preisverteilung über 7 Wochentage × 24 Stunden ({fuelType.toUpperCase()})
+            Preisverteilung über 7 Wochentage × 24 Stunden ({fuelType.toUpperCase()}) • Basis: {stationName}
           </p>
         </div>
 

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Sparkles, MapPin, Navigation, TrendingDown, TrendingUp, Minus, Calculator, Clock, ShieldCheck, AlertTriangle, Zap, Calendar } from 'lucide-react';
+import { Sparkles, MapPin, Navigation, TrendingDown, TrendingUp, Minus, Calculator, Clock, ShieldCheck, AlertTriangle, Zap } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
 

@@ -187,7 +187,6 @@ export function calculateOptimalTimingForStation(currentPrice, history = []) {
   const base = currentPrice || 1.70;
 
   // 1. Optimale Uhrzeit heute (typischerweise zwischen 18:00 und 19:45 Uhr)
-  const optimalHourToday = 18;
   const isPastOptimalToday = currentHour >= 20;
 
   // Historische Differenz zum Tiefststand des Tages (ca. -4.5 ct)
@@ -207,7 +206,10 @@ export function calculateOptimalTimingForStation(currentPrice, history = []) {
   if (currentHour >= 18 && currentHour <= 20) {
     verdict = 'REFUEL_NOW';
     verdictText = 'Jetzt optimales Preisfenster! Die Preise sind auf dem Tagestiefststand.';
-  } else if (currentHour >= 21 || currentHour <= 5) {
+  } else if (isPastOptimalToday) {
+    verdict = 'AVOID_NIGHT';
+    verdictText = 'Das heutige Abendtief ist vorüber. Nachtphase aktiv – erst morgen wieder ab 12:00 oder 18:00 Uhr tanken.';
+  } else if (currentHour <= 5) {
     verdict = 'AVOID_NIGHT';
     verdictText = 'Nachtzuschlag aktiv! Wenn möglich erst morgen ab 12:00 Uhr oder ab 18:00 Uhr tanken.';
   } else if (savingsVsNowCent >= 3.0) {

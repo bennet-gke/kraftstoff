@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Database, Key, Sliders, Clock, Check, X, ShieldAlert, ExternalLink, Activity, Info, AlertCircle, CheckCircle2, Cloud, Folder } from 'lucide-react';
+import { Settings, Database, Key, Clock, Check, X, ExternalLink, Info, AlertCircle, CheckCircle2, Cloud } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { backupService } from '../services/backupService';
 

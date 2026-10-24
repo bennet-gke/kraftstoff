@@ -12,10 +12,7 @@ import {
   Workflow,
   Copy,
   Check,
-  Info,
-  Clock,
   Sparkles,
-  ExternalLink,
 } from 'lucide-react';
 import { notificationService } from '../services/notificationService';
 import { dataService } from '../services/dataService';
@@ -23,24 +20,19 @@ import { locationService } from '../services/locationService';
 
 export default function PushNotificationManager({ isOpen, onClose }) {
   const [permission, setPermission] = useState('default');
-  const [isIOS, setIsIOS] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
   const [testSent, setTestSent] = useState(false);
   const [activeTab, setActiveTab] = useState('browser'); // 'browser' | 'ios' | 'shortcuts'
   const [copiedUrl, setCopiedUrl] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && isOpen) {
       setPermission(notificationService.getPermission());
 
       const userAgent = window.navigator.userAgent.toLowerCase();
       const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
-      setIsIOS(isIosDevice);
-
-      const isInStandalone =
-        window.navigator.standalone === true ||
-        window.matchMedia('(display-mode: standalone)').matches;
-      setIsStandalone(isInStandalone);
+      if (isIosDevice) {
+        setActiveTab('ios');
+      }
     }
   }, [isOpen]);
 

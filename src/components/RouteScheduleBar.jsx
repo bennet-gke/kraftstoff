@@ -7,11 +7,8 @@ import {
   Car,
   MapPin,
   SlidersHorizontal,
-  Sparkles,
-  Route,
   RotateCcw,
   LocateFixed,
-  ChevronDown,
 } from 'lucide-react';
 import { QUICK_CITIES } from '../services/locationService';
 

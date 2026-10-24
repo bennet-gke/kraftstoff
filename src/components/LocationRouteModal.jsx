@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MapPin, Navigation, Plus, Trash2, X, Check, Target, Compass, Download, Cloud, Search, LocateFixed, Eye, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { MapPin, Navigation, Plus, Trash2, X, Download, Search, LocateFixed, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { locationService } from '../services/locationService';
 import { routeService } from '../services/routeService';
 import { backupService } from '../services/backupService';
@@ -54,8 +54,6 @@ export default function LocationRouteModal({
       }
     }
   }, [locations, startType, endType]);
-
-  if (!isOpen) return null;
 
   // 1. GPS Standort live abrufen mit automatischer Adress-Rückauflösung
   const handleGetGpsPosition = () => {
@@ -251,7 +249,7 @@ export default function LocationRouteModal({
 
   // 5. Automatische OSM-Streckenberechnung im Hintergrund bei jeder Ortsauswahl
   useEffect(() => {
-    if (modalTab !== 'routes') return;
+    if (!isOpen || modalTab !== 'routes') return;
     let isCancelled = false;
 
     const autoCalculateRoute = async () => {
@@ -404,6 +402,8 @@ export default function LocationRouteModal({
       setTimeout(() => backupService.directSyncToICloud(), 150);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -951,14 +951,27 @@ export default function LocationRouteModal({
                     marginBottom: '0.75rem',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.35rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#166534', fontWeight: 700, fontSize: '0.8rem' }}>
                       <CheckCircle2 size={15} color="#16A34A" />
                       <span>OSM-Strecke automatisch berechnet</span>
                     </div>
-                    <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: 600 }}>
-                      ±{newRouteCorridor} km Korridor
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <button
+                        type="button"
+                        onClick={handlePreviewOsmRoute}
+                        disabled={isCalculatingOsm}
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                        title="Route manuell neu berechnen"
+                      >
+                        <RefreshCw size={10} className={isCalculatingOsm ? 'animate-spin' : ''} />
+                        <span>Neu berechnen</span>
+                      </button>
+                      <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: 600 }}>
+                        ±{newRouteCorridor} km Korridor
+                      </span>
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.25rem' }}>

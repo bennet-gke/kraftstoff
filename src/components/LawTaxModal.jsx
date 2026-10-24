@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Scale, Plus, Check, Trash2, X, AlertTriangle, ShieldCheck, Clock, Zap, Sparkles } from 'lucide-react';
+import { Scale, Plus, Trash2, X, ShieldCheck, Clock, Zap, Sparkles } from 'lucide-react';
 
 export default function LawTaxModal({
   isOpen,

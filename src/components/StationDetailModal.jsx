@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Navigation, Sparkles, Activity, MapPin, Calculator, Car, Gauge, CheckCircle2, AlertTriangle, ArrowRight, Clock, ShieldCheck, Zap, Calendar, TrendingDown } from 'lucide-react';
+import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap } from 'lucide-react';
 import PriceTrendChart from './PriceTrendChart';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
@@ -14,8 +14,6 @@ export default function StationDetailModal({
   defaultDetourMode = 'local_roundtrip',
   onClose,
 }) {
-  if (!station) return null;
-
   // Interaktive Rechner-Parameter im Modal
   const defaultLiters = activeVehicle
     ? Math.round(activeVehicle.tankCapacityL * (1 - (activeVehicle.currentFuelLevelPct || 20) / 100))
@@ -23,11 +21,12 @@ export default function StationDetailModal({
 
   const [simLiters, setSimLiters] = useState(defaultLiters);
   const [simConsumption, setSimConsumption] = useState(activeVehicle?.consumptionL100km || 6.2);
-  const [simWear, setSimWear] = useState(0.06); // 6 Cent/km Verschleiß
-  const [modalDetourMode, setModalDetourMode] = useState(station.isOnRouteCorridor ? 'route_corridor' : defaultDetourMode);
+  const simWear = 0.06; // 6 Cent/km kalkulatorischer Verschleiß
+  const [modalDetourMode, setModalDetourMode] = useState(station?.isOnRouteCorridor ? 'route_corridor' : defaultDetourMode);
 
   // Umweg-Rentabilität
   const detour = useMemo(() => {
+    if (!station) return calculateDetourProfitability({ targetPrice: 1.70, targetDistanceKm: 0 });
     return calculateDetourProfitability({
       targetPrice: station.currentPrice,
       targetDistanceKm: station.distanceKm,
@@ -40,21 +39,25 @@ export default function StationDetailModal({
       detourMode: modalDetourMode,
       realAdditionalKm: station.realAdditionalKm,
     });
-  }, [station.currentPrice, station.distanceKm, station.realAdditionalKm, baseStation, simLiters, simConsumption, simWear, modalDetourMode]);
+  }, [station, baseStation, simLiters, simConsumption, simWear, modalDetourMode]);
 
   // Monte-Carlo Ankunftssimulation (1.000 Pfade)
   const arrival = useMemo(() => {
+    if (!station) return simulateArrivalPriceMonteCarlo({ currentPrice: 1.70, distanceKm: 0 });
     return simulateArrivalPriceMonteCarlo({
       currentPrice: station.currentPrice,
       distanceKm: station.distanceKm,
       isRouteCorridor: modalDetourMode === 'route_corridor',
     });
-  }, [station.currentPrice, station.distanceKm, modalDetourMode]);
+  }, [station, modalDetourMode]);
 
   // Optimale Uhrzeiten & Bester Tag
   const timing = useMemo(() => {
+    if (!station) return calculateOptimalTimingForStation(1.70, []);
     return calculateOptimalTimingForStation(station.currentPrice, station.history);
-  }, [station.currentPrice, station.history]);
+  }, [station]);
+
+  if (!station) return null;
 
   const timingSavingsEuro = ((timing.savingsVsNowCent * simLiters) / 100).toFixed(2);
 
@@ -63,7 +66,6 @@ export default function StationDetailModal({
     window.open(url, '_blank');
   };
 
-  const isCheap = evaluation?.isCheap;
   const score = mlPrediction?.score || evaluation?.score || 50;
 
   return (

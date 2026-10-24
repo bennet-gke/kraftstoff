@@ -86,7 +86,6 @@ const CITY_COORDINATES = {
   mönchengladbach: { lat: 51.1805, lng: 6.4428, city: 'Mönchengladbach' },
   braunschweig: { lat: 52.2689, lng: 10.5268, city: 'Braunschweig' },
   chemnitz: { lat: 50.8278, lng: 12.9214, city: 'Chemnitz' },
-  kiel: { lat: 54.3233, lng: 10.1228, city: 'Kiel' },
   aachen: { lat: 50.7753, lng: 6.0839, city: 'Aachen' },
   halle: { lat: 51.4828, lng: 11.9698, city: 'Halle (Saale)' },
   magdeburg: { lat: 52.1205, lng: 11.6276, city: 'Magdeburg' },

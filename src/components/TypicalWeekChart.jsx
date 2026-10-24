@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
-import { Calendar, Clock, TrendingDown, TrendingUp, AlertCircle, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Calendar, Clock, TrendingDown, TrendingUp, Sparkles } from 'lucide-react';
 import { generateTypicalWeeklyProfile } from '../engine/typicalWeek';
 
 export default function TypicalWeekChart({
@@ -198,7 +198,7 @@ export default function TypicalWeekChart({
         setHoveredHour(null);
       });
 
-  }, [profile, currentGlobalHourIndex]);
+  }, [profile, currentGlobalHourIndex, currentGermanDay]);
 
   const currentPoint = profile.hourlyData[currentGlobalHourIndex];
 

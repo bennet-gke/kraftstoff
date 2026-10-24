@@ -3,23 +3,17 @@ import {
   Fuel,
   Map as MapIcon,
   BarChart3,
-  Calendar,
   Sparkles,
   Scale,
   BellRing,
   Settings,
   Car,
   MapPin,
-  Navigation,
   RefreshCw,
   ChevronRight,
-  TrendingDown,
-  Calculator,
   Cloud,
   Download,
   Upload,
-  Compass,
-  LocateFixed,
 } from 'lucide-react';
 
 import { dataService } from './services/dataService';

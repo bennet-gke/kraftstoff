@@ -244,10 +244,10 @@ class RouteService {
         const distStartToStation = calculateHaversineDistance(start.lat, start.lng, station.lat, station.lng);
         const distStationToEnd = calculateHaversineDistance(station.lat, station.lng, end.lat, end.lng);
         const routeThroughStation = distStartToStation + distStationToEnd;
+        const extraFromRoute = Math.max(0, routeThroughStation - baseDirectDist);
 
         // Der zusätzliche Mehrweg durch das Verlassen der Strecke zur Tankstelle
-        // Typischerweise 2 * Abstecherentfernung zur Autobahn/Hauptstraße
-        const realAdditionalKm = parseFloat(Math.max(0.2, (minDistToPolyline * 2)).toFixed(1));
+        const realAdditionalKm = parseFloat(Math.max(0.2, minDistToPolyline * 2, extraFromRoute).toFixed(1));
 
         return {
           ...station,

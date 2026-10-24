@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Navigation, Sparkles, MapPin, CheckCircle, AlertTriangle, Compass, Sliders, LocateFixed } from 'lucide-react';
+import { Navigation, Sparkles, MapPin, Sliders, LocateFixed } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { QUICK_CITIES } from '../services/locationService';
 
