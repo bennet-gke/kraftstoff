@@ -93,11 +93,7 @@ export default function StationCard({
 
   return (
     <div
-      className={`accordion-card ${isExpanded ? 'is-expanded' : ''}`}
-      style={{
-        borderLeft: isCheap ? '4px solid #059669' : '1px solid #E2E8F0',
-        background: '#FFFFFF',
-      }}
+      className={`accordion-card ${isExpanded ? 'is-expanded' : ''} ${isCheap ? 'is-favorable' : ''}`}
     >
       {/* 1. KOPFZEILE (One-Glance Header mit geschützten Zeilen & ohne Textumbrüche) */}
       <div
@@ -289,9 +285,18 @@ export default function StationCard({
               </span>
             )}
 
-            {/* Ausklapp-Pfeil */}
-            <div style={{ color: '#94A3B8', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {/* Ausklapp-Pfeil mit sanfter Drehanimation */}
+            <div
+              style={{
+                color: '#94A3B8',
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+                transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+            >
+              <ChevronDown size={14} />
             </div>
           </div>
 
@@ -507,7 +512,8 @@ export default function StationCard({
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '0.4rem',
-                  padding: '0.55rem',
+                  padding: '0.55rem 0.85rem',
+                  borderRadius: '9999px',
                   fontSize: '0.78rem',
                 }}
               >
@@ -528,7 +534,8 @@ export default function StationCard({
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '0.4rem',
-                  padding: '0.55rem',
+                  padding: '0.55rem 0.85rem',
+                  borderRadius: '9999px',
                   fontSize: '0.78rem',
                 }}
               >

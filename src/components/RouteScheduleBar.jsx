@@ -221,11 +221,12 @@ export default function RouteScheduleBar({
           className="clean-card"
           style={{
             marginTop: '0.5rem',
-            padding: '0.85rem 1rem',
+            padding: '0.95rem 1.1rem',
             background: '#FFFFFF',
-            border: '1px solid #E2E8F0',
-            boxShadow: 'var(--shadow-elevated)',
-            animation: 'fadeIn 0.15s ease',
+            border: '1px solid rgba(226, 232, 240, 0.95)',
+            borderRadius: '16px',
+            boxShadow: '0 10px 25px -4px rgba(15, 23, 42, 0.08), 0 4px 10px -2px rgba(15, 23, 42, 0.04)',
+            animation: 'fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
           {/* DRAWER 1: STANDORT & RADIUS */}

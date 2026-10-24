@@ -358,10 +358,16 @@ export default function App() {
           {/* Logo */}
           <div className="brand-badge" onClick={() => setActiveTab('stations')}>
             <div className="brand-logo-box">
-              <Fuel size={20} strokeWidth={2.4} />
+              <Fuel size={19} strokeWidth={2.4} />
             </div>
             <div>
-              <div className="brand-title">KRAFTSTOFF</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <span className="brand-title">KRAFTSTOFF</span>
+                <span className="live-status-pill">
+                  <span className="live-dot" />
+                  <span>LIVE</span>
+                </span>
+              </div>
               <div className="brand-subtitle">Intelligenter Tankradar</div>
             </div>
           </div>
@@ -398,47 +404,51 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Action Icons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {/* Action Dock (Apple-Style Frosted Capsule) */}
+          <div className="header-action-dock" role="toolbar" aria-label="Schnellaktionen">
             
             {/* Auto Garage Button */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsVehicleModalOpen(true)}
-              title="Fahrzeug-Garage & Verbrauch"
-              style={{ padding: '0.45rem' }}
+              title={`Garage: ${activeVehicle?.name || 'Fahrzeuge'}`}
+              aria-label="Fahrzeug-Garage"
             >
-              <Car size={16} color="#0F172A" />
+              <Car size={16} />
             </button>
 
             {/* Standorte & Routen Button */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsLocRouteModalOpen(true)}
-              title="Standorte & Routen verwalten"
-              style={{ padding: '0.45rem' }}
+              title="Standorte & Routen"
+              aria-label="Standorte und Routen"
             >
-              <MapPin size={16} color="#0F172A" />
+              <MapPin size={16} />
             </button>
 
             {/* Marktregeln & 12-Uhr-Verordnung Icon */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsLawModalOpen(true)}
-              title="Marktregeln & 12-Uhr-Verordnung anpassen"
-              style={{ position: 'relative', padding: '0.45rem' }}
+              title="Marktregeln & 12-Uhr-Verordnung"
+              aria-label="Marktregeln"
             >
-              <Scale size={16} color="#0F172A" />
+              <Scale size={16} />
               {isTwelveClockActive && (
                 <span
                   style={{
                     position: 'absolute',
-                    top: '-3px',
-                    right: '-3px',
-                    width: '8px',
-                    height: '8px',
+                    top: '4px',
+                    right: '4px',
+                    width: '7px',
+                    height: '7px',
                     borderRadius: '50%',
                     background: '#059669',
+                    boxShadow: '0 0 0 1.5px #FFFFFF',
                   }}
                   title="12-Uhr-Spritpreisverordnung aktiv"
                 />
@@ -447,32 +457,35 @@ export default function App() {
 
             {/* Web Push Manager */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsPushModalOpen(true)}
               title="Push-Benachrichtigungen"
-              style={{ padding: '0.45rem' }}
+              aria-label="Push-Benachrichtigungen"
             >
-              <BellRing size={16} color="#0F172A" />
+              <BellRing size={16} />
             </button>
 
             {/* iCloud Sync Button */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsICloudModalOpen(true)}
-              title="iCloud Drive Sync (Mac & iPhone)"
-              style={{ padding: '0.45rem' }}
+              title="iCloud Drive Sync"
+              aria-label="iCloud Sync"
             >
               <Cloud size={16} color="#0284C7" />
             </button>
 
             {/* Einstellungen */}
             <button
-              className="btn btn-secondary btn-sm"
+              type="button"
+              className="header-action-btn"
               onClick={() => setIsSettingsModalOpen(true)}
-              title="Einstellungen & Supabase"
-              style={{ padding: '0.45rem' }}
+              title="Einstellungen"
+              aria-label="Einstellungen"
             >
-              <Settings size={16} color="#0F172A" />
+              <Settings size={16} />
             </button>
 
           </div>
@@ -553,24 +566,16 @@ export default function App() {
           <>
             {/* Top-Empfehlung Banner mit kombinierter Literpreis- & Mehrweg-Rechnung */}
             {bestStation && (
-              <div
-                className="clean-card"
-                style={{
-                  background: 'linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%)',
-                  marginBottom: '1.25rem',
-                  padding: '1.25rem',
-                  border: '1px solid #E2E8F0',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.35rem' }}>
+              <div className="top-recommendation-card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.85rem' }}>
+                  <div style={{ flex: 1, minWidth: '240px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
                       <span className="badge badge-favorable">
                         <Sparkles size={12} />
-                        <span>Top-Empfehlung ({activeVehicle?.name})</span>
+                        <span>Top-Empfehlung ({activeVehicle?.name || 'Fahrzeug'})</span>
                       </span>
                       {bestStation.isOnRouteCorridor && (
-                        <span className="badge badge-blue">Auf deiner aktiven Route</span>
+                        <span className="badge badge-blue">Auf aktiver Route</span>
                       )}
                       {baseStation && bestStation.id !== baseStation.id && bestStation.detour?.priceDiffCent > 0 && (
                         <span className="badge badge-favorable" style={{ fontWeight: 700 }}>
@@ -579,14 +584,14 @@ export default function App() {
                       )}
                     </div>
 
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A' }}>
+                    <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.01em' }}>
                       {bestStation.name}
                     </h2>
-                    <p style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.4 }}>
+                    <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.4 }}>
                       {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
                       {bestStation.detour?.isProfitable && baseStation && bestStation.id !== baseStation.id ? (
                         <strong style={{ color: '#059669' }}>
-                          Fahrt lohnt sich! +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Reingewinn ({bestStation.detour.formulaSummary})
+                          +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Reingewinn ({bestStation.detour.formulaSummary})
                         </strong>
                       ) : (
                         <span>Niedrigster Zapfsäulenpreis vor Ort</span>
@@ -594,23 +599,24 @@ export default function App() {
                     </p>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0 }}>
                     <div style={{ textAlign: 'right' }}>
-                      <div className="num-mono" style={{ fontSize: '2rem', fontWeight: 800, color: '#059669', lineHeight: 1 }}>
+                      <div className="num-mono" style={{ fontSize: '1.9rem', fontWeight: 800, color: '#059669', lineHeight: 1 }}>
                         {Number(bestStation.currentPrice || 1.70).toFixed(3)}
-                        <span style={{ fontSize: '0.9rem', color: '#64748B', marginLeft: '0.25rem' }}>€/L</span>
+                        <span style={{ fontSize: '0.85rem', color: '#64748B', marginLeft: '0.2rem' }}>€/L</span>
                       </div>
-                      <span style={{ fontSize: '0.72rem', color: '#94A3B8', textTransform: 'uppercase' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#94A3B8', textTransform: 'uppercase', fontWeight: 700 }}>
                         {selectedFuel}
                       </span>
                     </div>
 
                     <button
-                      className="btn btn-primary"
+                      className="btn btn-primary btn-sm"
                       onClick={() => setSelectedStationForDetail(bestStation)}
+                      style={{ padding: '0.55rem 0.95rem', borderRadius: '9999px' }}
                     >
-                      <span>Analyse öffnen</span>
-                      <ChevronRight size={15} />
+                      <span>Analyse</span>
+                      <ChevronRight size={14} />
                     </button>
                   </div>
                 </div>
@@ -629,11 +635,11 @@ export default function App() {
                 padding: '0 0.2rem',
               }}
             >
-              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0F172A' }}>
                 {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
                 {baseStation && (
-                  <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.5rem' }}>
-                    • Referenz-Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{baseStation.currentPrice.toFixed(3)} €</span>)
+                  <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.4rem' }}>
+                    • Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{baseStation.currentPrice.toFixed(3)} €</span>)
                   </span>
                 )}
               </div>
@@ -643,7 +649,7 @@ export default function App() {
                 onClick={() => loadData(selectedFuel)}
                 disabled={isRefreshing}
                 title="Preise aktualisieren"
-                style={{ padding: '0.25rem 0.55rem', fontSize: '0.74rem' }}
+                style={{ padding: '0.25rem 0.6rem', fontSize: '0.74rem', borderRadius: '9999px' }}
               >
                 <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
                 <span>Aktualisieren</span>
@@ -651,7 +657,7 @@ export default function App() {
             </div>
 
             {/* Grid aller Stationen */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+            <div className="station-cards-grid">
               {sortedStations.map((st) => (
                 <StationCard
                   key={st.id}
