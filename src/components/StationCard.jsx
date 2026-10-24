@@ -5,7 +5,6 @@ import {
   Navigation,
   TrendingDown,
   TrendingUp,
-  Minus,
   Calculator,
   Clock,
   ShieldCheck,
@@ -23,7 +22,7 @@ export default function StationCard({
   activeVehicle,
   evaluation,
   mlPrediction,
-  fuelType = 'diesel',
+  fuelType: _fuelType = 'diesel',
   detourMode = 'local_roundtrip',
   customConsumption = null,
   customLiters = null,
@@ -478,6 +477,15 @@ export default function StationCard({
                   Optimal: {timing.optimalHourToday}
                 </span>
               )}
+
+              <span
+                className="badge badge-gray"
+                style={{ fontSize: '0.66rem', padding: '0.1rem 0.4rem', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                title="TensorFlow.js Vorhersage-Score"
+              >
+                <Sparkles size={10} color="#059669" />
+                <span>KI: {score}/100</span>
+              </span>
             </div>
           </div>
 

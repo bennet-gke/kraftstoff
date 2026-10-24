@@ -36,8 +36,8 @@ export default function StationMapView({
       zoomControl: false,
     });
 
-    // Zoom Control oben rechts
-    L.control.zoom({ position: 'topright' }).addTo(map);
+    // Zoom Control unten rechts (kollidiert nicht mit der oberen Steuerungsleiste)
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     // Esri World Light Gray Base: Saubere, minimalistische Kacheln
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
@@ -228,69 +228,136 @@ export default function StationMapView({
   return (
     <div className="clean-card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
       
-      {/* Interaktive Map Toolbar (Standortwechsler & Radius-Slider) */}
+      {/* Interaktive Map Toolbar (Mobil-optimierte 2-zeilige Steuerungsleiste) */}
       <div
         style={{
           position: 'absolute',
-          top: '12px',
-          left: '12px',
+          top: '10px',
+          left: '10px',
+          right: '10px',
           zIndex: 1000,
           background: 'rgba(255, 255, 255, 0.95)',
-          backdropFilter: 'blur(8px)',
-          borderRadius: '8px',
-          padding: '0.5rem 0.85rem',
+          backdropFilter: 'blur(12px)',
+          borderRadius: '12px',
+          padding: '0.55rem 0.75rem',
           border: '1px solid #E2E8F0',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+          boxShadow: '0 4px 16px rgba(15, 23, 42, 0.08)',
           display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: '0.75rem',
-          fontSize: '0.78rem',
-          maxWidth: '90%',
+          flexDirection: 'column',
+          gap: '0.45rem',
         }}
       >
-        {/* Standort-Auswahl */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <MapPin size={15} color="#0F172A" />
-          <select
-            value={activeLocation?.id || ''}
-            onChange={(e) => onSelectLocation && onSelectLocation(e.target.value)}
-            style={{
-              padding: '0.3rem 0.6rem',
-              borderRadius: '6px',
-              border: '1px solid #CBD5E1',
-              fontWeight: 700,
-              fontSize: '0.78rem',
-              color: '#0F172A',
-              background: '#FFFFFF',
-              cursor: 'pointer',
-            }}
-          >
-            {locations.map((loc) => (
-              <option key={loc.id} value={loc.id}>
-                {loc.name}
-              </option>
-            ))}
-          </select>
-
-          {onLocateGps && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onLocateGps}
-              style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0.5rem', background: '#F0F9FF', borderColor: '#BAE6FD', color: '#0369A1' }}
-              title="Aktuellen GPS-Standort orten und Karte zentrieren"
+        {/* Zeile 1: Standort-Auswahl, GPS-Button & Stationen-Badge */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0, flex: 1 }}>
+            <MapPin size={14} color="#0F172A" style={{ flexShrink: 0 }} />
+            <select
+              value={activeLocation?.id || ''}
+              onChange={(e) => onSelectLocation && onSelectLocation(e.target.value)}
+              style={{
+                width: '100%',
+                maxWidth: '200px',
+                padding: '0.28rem 0.5rem',
+                borderRadius: '6px',
+                border: '1px solid #CBD5E1',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                color: '#0F172A',
+                background: '#FFFFFF',
+                cursor: 'pointer',
+                textOverflow: 'ellipsis',
+              }}
             >
-              <LocateFixed size={12} color="#0284C7" />
-              <span>GPS orten</span>
-            </button>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+            {onLocateGps && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onLocateGps}
+                style={{
+                  fontSize: '0.72rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  padding: '0.25rem 0.5rem',
+                  background: '#F0F9FF',
+                  borderColor: '#BAE6FD',
+                  color: '#0369A1',
+                  whiteSpace: 'nowrap',
+                }}
+                title="Aktuellen GPS-Standort orten"
+              >
+                <LocateFixed size={12} color="#0284C7" />
+                <span>GPS</span>
+              </button>
+            )}
+
+            <span
+              className="badge badge-favorable"
+              style={{ fontSize: '0.68rem', padding: '0.2rem 0.45rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {stations.length} Stationen
+            </span>
+          </div>
+
+        </div>
+
+        {/* Zeile 2: Suchradius Slider & Wischbare Schnellstart-Städte */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.6rem',
+            borderTop: '1px solid #F1F5F9',
+            paddingTop: '0.35rem',
+          }}
+        >
+          {/* Radius-Slider */}
+          {onUpdateRadius && activeLocation && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <Sliders size={12} color="#64748B" />
+              <span>Radius:</span>
+              <input
+                type="range"
+                min="2"
+                max="25"
+                step="1"
+                value={activeLocation.radiusKm || 5}
+                onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
+                style={{ width: '65px', accentColor: '#0F172A', cursor: 'pointer' }}
+              />
+              <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
+                {activeLocation.radiusKm} km
+              </strong>
+            </div>
           )}
 
-          {/* Schnellstart-Städte */}
+          {/* Swipeable Quick Cities Strip */}
           {onSelectQuickCity && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', overflowX: 'auto' }}>
-              {QUICK_CITIES.slice(0, 5).map((qc) => {
-                const isSelected = activeLocation?.name?.includes(qc.name);
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                overflowX: 'auto',
+                scrollbarWidth: 'none',
+                WebkitOverflowScrolling: 'touch',
+                flexShrink: 1,
+                minWidth: 0,
+              }}
+            >
+              {QUICK_CITIES.map((qc) => {
+                const isSelected = activeLocation?.name?.toLowerCase().includes(qc.name.toLowerCase());
                 return (
                   <button
                     key={qc.id}
@@ -301,11 +368,12 @@ export default function StationMapView({
                       color: isSelected ? '#FFFFFF' : '#334155',
                       border: 'none',
                       borderRadius: '4px',
-                      padding: '0.2rem 0.45rem',
-                      fontSize: '0.7rem',
+                      padding: '0.18rem 0.45rem',
+                      fontSize: '0.68rem',
                       fontWeight: 600,
                       cursor: 'pointer',
                       whiteSpace: 'nowrap',
+                      flexShrink: 0,
                     }}
                   >
                     {qc.name}
@@ -316,30 +384,6 @@ export default function StationMapView({
           )}
         </div>
 
-        {/* Radius-Slider */}
-        {onUpdateRadius && activeLocation && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderLeft: '1px solid #E2E8F0', paddingLeft: '0.75rem' }}>
-            <Sliders size={13} color="#64748B" />
-            <span style={{ color: '#64748B', whiteSpace: 'nowrap' }}>Radius:</span>
-            <input
-              type="range"
-              min="2"
-              max="25"
-              step="1"
-              value={activeLocation.radiusKm || 5}
-              onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
-              style={{ width: '80px', accentColor: '#0F172A', cursor: 'pointer' }}
-            />
-            <strong className="num-mono" style={{ color: '#0F172A', minWidth: '38px' }}>
-              {activeLocation.radiusKm} km
-            </strong>
-          </div>
-        )}
-
-        {/* Stationsanzahl Badge */}
-        <div style={{ borderLeft: '1px solid #E2E8F0', paddingLeft: '0.75rem', color: '#059669', fontWeight: 700 }}>
-          {stations.length} Stationen im Blick
-        </div>
       </div>
 
       {/* Map Canvas */}
