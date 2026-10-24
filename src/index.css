@@ -211,17 +211,20 @@ body {
   border-color: #CBD5E1;
 }
 
-/* Price Badges */
+/* Price Badges & Status Pills */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.25rem 0.65rem;
+  padding: 0.22rem 0.65rem;
   border-radius: var(--radius-full);
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   border: 1px solid transparent;
+  white-space: nowrap !important;
+  flex-shrink: 0;
+  line-height: 1.25;
 }
 
 .badge-favorable {

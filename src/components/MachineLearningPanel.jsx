@@ -251,16 +251,16 @@ export default function MachineLearningPanel({
 
         {/* PREISFÜHRERSCHAFTS- & REAKTIONS-DETEKTOR */}
         <div className="clean-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-              <Zap size={16} color={brandJumpAlert?.isJumpActive ? '#DC2626' : '#059669'} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', minWidth: 0 }}>
+              <Zap size={16} color={brandJumpAlert?.isJumpActive ? '#DC2626' : '#059669'} style={{ flexShrink: 0 }} />
               <strong style={{ fontSize: '0.95rem', color: '#0F172A' }}>
-                Preisführerschafts-Radar (Kartellamt Monitor)
+                Preisführerschafts-Radar
               </strong>
             </div>
             <span
               className={`badge ${brandJumpAlert?.isJumpActive ? 'badge-unfavorable' : 'badge-favorable'}`}
-              style={{ fontSize: '0.74rem' }}
+              style={{ fontSize: '0.74rem', whiteSpace: 'nowrap', flexShrink: 0 }}
             >
               {brandJumpAlert?.isJumpActive ? 'Preissprung Signal' : 'Markt ruhig'}
             </span>

@@ -619,12 +619,24 @@ export default function App() {
               <Cloud size={16} color="#38BDF8" />
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A' }}>
-                  iCloud Drive & Datenstand
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                  iCloud Drive
                 </span>
-                <span className="badge badge-gray" style={{ fontSize: '0.64rem', padding: '0.1rem 0.35rem' }}>
-                  Live synchronisiert
+                <span
+                  className="badge badge-gray"
+                  style={{
+                    fontSize: '0.64rem',
+                    padding: '0.12rem 0.45rem',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.3rem',
+                  }}
+                >
+                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#059669', display: 'inline-block' }} />
+                  <span>Live synchronisiert</span>
                 </span>
                 {notifPermission !== 'granted' && (
                   <button
