@@ -802,16 +802,15 @@ export default function App() {
         />
       )}
 
-      {/* iOS BOTTOM NAVIGATION BAR (Thumb Ergonomics für Smartphones) */}
-      <nav className="mobile-bottom-nav">
+      {/* iOS Floating Capsule Navigation Dock (Apple-Style Glass Island) */}
+      <nav className="mobile-bottom-nav" aria-label="Hauptnavigation">
         <button
           type="button"
           className={`bottom-nav-item ${activeTab === 'stations' ? 'active' : ''}`}
           onClick={() => setActiveTab('stations')}
+          aria-label="Radar"
         >
-          <div className="nav-icon-wrap">
-            <Fuel size={18} />
-          </div>
+          <Fuel size={16} strokeWidth={activeTab === 'stations' ? 2.4 : 2} />
           <span className="bottom-nav-label">Radar</span>
         </button>
 
@@ -819,10 +818,9 @@ export default function App() {
           type="button"
           className={`bottom-nav-item ${activeTab === 'map' ? 'active' : ''}`}
           onClick={() => setActiveTab('map')}
+          aria-label="Karte"
         >
-          <div className="nav-icon-wrap">
-            <MapIcon size={18} />
-          </div>
+          <MapIcon size={16} strokeWidth={activeTab === 'map' ? 2.4 : 2} />
           <span className="bottom-nav-label">Karte</span>
         </button>
 
@@ -830,10 +828,9 @@ export default function App() {
           type="button"
           className={`bottom-nav-item ${activeTab === 'analytics' ? 'active' : ''}`}
           onClick={() => setActiveTab('analytics')}
+          aria-label="Trends"
         >
-          <div className="nav-icon-wrap">
-            <BarChart3 size={18} />
-          </div>
+          <BarChart3 size={16} strokeWidth={activeTab === 'analytics' ? 2.4 : 2} />
           <span className="bottom-nav-label">Trends</span>
         </button>
 
@@ -841,11 +838,10 @@ export default function App() {
           type="button"
           className={`bottom-nav-item ${activeTab === 'ml' ? 'active' : ''}`}
           onClick={() => setActiveTab('ml')}
+          aria-label="KI Prognosen"
         >
-          <div className="nav-icon-wrap">
-            <Sparkles size={18} />
-          </div>
-          <span className="bottom-nav-label">KI (TF.js)</span>
+          <Sparkles size={16} strokeWidth={activeTab === 'ml' ? 2.4 : 2} />
+          <span className="bottom-nav-label">KI</span>
         </button>
       </nav>
 
