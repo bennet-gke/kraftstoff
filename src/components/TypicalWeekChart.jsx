@@ -177,22 +177,31 @@ export default function TypicalWeekChart({
       .attr('stroke-width', 2)
       .style('opacity', 0);
 
+    const handlePointer = (event) => {
+      const [xPos] = d3.pointer(event);
+      const index = Math.min(167, Math.max(0, Math.round(x.invert(xPos))));
+      const p = profile.hourlyData[index];
+      if (!p) return;
+
+      crosshair.attr('x1', x(p.index)).attr('x2', x(p.index)).style('opacity', 1);
+      hoverDot.attr('cx', x(p.index)).attr('cy', y(p.price)).style('opacity', 1);
+      setHoveredHour(p);
+    };
+
     g.append('rect')
       .attr('width', innerWidth)
       .attr('height', innerHeight)
       .attr('fill', 'transparent')
       .style('cursor', 'crosshair')
-      .on('mousemove', (event) => {
-        const [xPos] = d3.pointer(event);
-        const index = Math.min(167, Math.max(0, Math.round(x.invert(xPos))));
-        const p = profile.hourlyData[index];
-        if (!p) return;
-
-        crosshair.attr('x1', x(p.index)).attr('x2', x(p.index)).style('opacity', 1);
-        hoverDot.attr('cx', x(p.index)).attr('cy', y(p.price)).style('opacity', 1);
-        setHoveredHour(p);
-      })
+      .on('mousemove', handlePointer)
+      .on('touchmove', handlePointer)
+      .on('touchstart', handlePointer)
       .on('mouseleave', () => {
+        crosshair.style('opacity', 0);
+        hoverDot.style('opacity', 0);
+        setHoveredHour(null);
+      })
+      .on('touchend', () => {
         crosshair.style('opacity', 0);
         hoverDot.style('opacity', 0);
         setHoveredHour(null);
@@ -289,7 +298,7 @@ export default function TypicalWeekChart({
           </div>
         ) : (
           <div style={{ fontSize: '0.74rem', color: '#94A3B8' }}>
-            Bewege die Maus über die Wochentage zur Stunden-Analyse
+            Tippe oder wische über die Wochentage zur Stunden-Analyse
           </div>
         )}
       </div>

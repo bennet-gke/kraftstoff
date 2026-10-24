@@ -348,6 +348,11 @@ export default function App() {
     }
   }, [sortedStations, settings, selectedFuel]);
 
+  // Beim Tab-Wechsel immer sauber nach oben scrollen
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [activeTab]);
+
   return (
     <div className={`app-viewport ${activeTab === 'map' ? 'map-mode-active' : ''}`}>
       
@@ -592,9 +597,12 @@ export default function App() {
                     <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.4 }}>
                       {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
                       {bestStation.detour?.isProfitable && baseStation && bestStation.id !== baseStation.id ? (
-                        <strong style={{ color: '#059669' }}>
-                          +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Reingewinn ({bestStation.detour.formulaSummary})
-                        </strong>
+                        <span style={{ color: '#059669', fontWeight: 700 }}>
+                          +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Netto-Ersparnis
+                          <span style={{ fontWeight: 500, color: '#64748B', marginLeft: '4px' }}>
+                            (abzgl. {bestStation.detour.detourFuelCostEuro?.toFixed(2) || '0.10'} € Sprit)
+                          </span>
+                        </span>
                       ) : (
                         <span>Niedrigster Zapfsäulenpreis vor Ort</span>
                       )}

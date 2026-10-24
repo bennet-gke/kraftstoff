@@ -303,22 +303,22 @@ export default function MachineLearningPanel({
       {/* 3. 24-STUNDEN NEURALE PREISKURVEN-PROGNOSE */}
       {neural24h && (
         <div className="clean-card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                <Clock size={16} color="#0F172A" />
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.6rem' }}>
+            <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                <Clock size={16} color="#0F172A" style={{ flexShrink: 0 }} />
                 <h4 style={{ fontSize: '0.98rem', fontWeight: 800, color: '#0F172A' }}>
                   Neurale 24-Stunden Preiskurven-Prognose
                 </h4>
                 {neural24h?.isTwelveClockActive && (
-                  <span className="badge badge-favorable" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <ShieldCheck size={12} />
-                    <span>12-Uhr-Regelung aktiv: Preiserhöhungsstopp ab 12h</span>
+                  <span className="badge badge-favorable" style={{ fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <ShieldCheck size={11} />
+                    <span>12h-Regel: Erhöhungsstopp aktiv</span>
                   </span>
                 )}
               </div>
-              <p style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '0.15rem' }}>
-                Vorausberechneter Preisverlauf für {selectedStation?.name}: Tiefststand um {neural24h.lowestHour}:00 Uhr (~{neural24h.lowestPrice.toFixed(3)} €), Höchstpreis um {neural24h.highestHour}:00 Uhr (~{neural24h.highestPrice.toFixed(3)} €).
+              <p style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                Vorausberechneter Verlauf für {selectedStation?.name}: Tiefststand um {neural24h.lowestHour}:00 Uhr (~{neural24h.lowestPrice.toFixed(3)} €), Höchstpreis um {neural24h.highestHour}:00 Uhr (~{neural24h.highestPrice.toFixed(3)} €).
               </p>
             </div>
 
@@ -328,12 +328,13 @@ export default function MachineLearningPanel({
               onChange={(e) => setSelectedStationId(e.target.value)}
               style={{
                 padding: '0.35rem 0.65rem',
-                borderRadius: '6px',
+                borderRadius: '8px',
                 border: '1px solid #CBD5E1',
                 fontSize: '0.78rem',
                 fontWeight: 600,
                 color: '#0F172A',
                 background: '#FFFFFF',
+                maxWidth: '100%',
               }}
             >
               {stations.map((st) => (
@@ -344,18 +345,23 @@ export default function MachineLearningPanel({
             </select>
           </div>
 
-          {/* Stunden-Balken / Preispunkte */}
+          {/* Stunden-Balken / Preispunkte als horizontal wischbarer Zeitstrahl */}
+          <div style={{ marginBottom: '0.35rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94A3B8' }}>
+            <span>24h-Zeitstrahl</span>
+            <span>← Wischen zum Erkunden →</span>
+          </div>
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(42px, 1fr))',
-              gap: '0.35rem',
+              display: 'flex',
               alignItems: 'flex-end',
+              gap: '0.5rem',
               background: '#F8FAFC',
               border: '1px solid #E2E8F0',
-              borderRadius: '8px',
-              padding: '0.85rem 0.5rem 0.5rem 0.5rem',
+              borderRadius: '12px',
+              padding: '0.85rem 0.75rem 0.65rem 0.75rem',
               overflowX: 'auto',
+              scrollbarWidth: 'none',
+              WebkitOverflowScrolling: 'touch',
             }}
           >
             {neural24h.curve.map((pt) => {
@@ -367,6 +373,7 @@ export default function MachineLearningPanel({
                 <div
                   key={pt.step}
                   style={{
+                    flex: '0 0 34px',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
@@ -382,7 +389,7 @@ export default function MachineLearningPanel({
                   <div
                     style={{
                       width: '100%',
-                      maxWidth: '24px',
+                      maxWidth: '22px',
                       height: `${heightPct}px`,
                       borderRadius: '4px 4px 2px 2px',
                       background: isBest
@@ -391,10 +398,11 @@ export default function MachineLearningPanel({
                         ? 'linear-gradient(180deg, #EF4444 0%, #DC2626 100%)'
                         : '#CBD5E1',
                       transition: 'height 0.2s ease',
+                      boxShadow: isBest ? '0 2px 8px rgba(16, 185, 129, 0.3)' : 'none',
                     }}
                   />
 
-                  <span style={{ fontSize: '0.65rem', color: '#64748B', marginTop: '0.15rem' }}>
+                  <span style={{ fontSize: '0.65rem', color: isBest ? '#059669' : '#64748B', fontWeight: isBest ? 700 : 500, marginTop: '0.15rem' }}>
                     {pt.hour}h
                   </span>
                 </div>

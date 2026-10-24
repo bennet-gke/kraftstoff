@@ -285,7 +285,9 @@ export function generateStationsForLocation(location, fuelType = 'diesel') {
     },
   ];
 
-  const cleanCity = targetLoc.name ? targetLoc.name.replace(/\(.*?\)/g, '').trim() : 'Zentrum';
+  const cleanCity = targetLoc.name
+    ? targetLoc.name.replace(/^GPS:\s*/i, '').replace(/\(.*?\)/g, '').trim()
+    : 'Zentrum';
 
   return brandConfigs.map((cfg, idx) => {
     const distKm = parseFloat(Math.max(0.5, radius * cfg.distFactor).toFixed(1));
