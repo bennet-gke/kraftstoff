@@ -164,6 +164,12 @@ body {
   display: none;
 }
 
+@media (max-width: 767px) {
+  .desktop-nav-pills {
+    display: none !important;
+  }
+}
+
 .nav-pill-btn {
   display: flex;
   align-items: center;
@@ -344,6 +350,210 @@ body {
   }
 }
 
+/* =========================================================================
+   Mobile-First & iOS Thumb Ergonomics
+   ========================================================================= */
+
+/* iOS Bottom Navigation Bar (Thumb Zone) */
+.mobile-bottom-nav {
+  display: flex;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-subtle);
+  padding: 0.4rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px)) 0.5rem;
+  justify-content: space-around;
+  align-items: center;
+  box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.03);
+}
+
+@media (min-width: 768px) {
+  .mobile-bottom-nav {
+    display: none !important;
+  }
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.18rem;
+  flex: 1;
+  padding: 0.3rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: var(--transition-smooth);
+  touch-action: manipulation;
+  min-height: 48px;
+}
+
+.bottom-nav-item.active {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.bottom-nav-item.active .nav-icon-wrap {
+  background: var(--bg-card-subtle);
+  color: var(--text-primary);
+}
+
+.nav-icon-wrap {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: var(--transition-smooth);
+}
+
+.bottom-nav-label {
+  font-size: 0.68rem;
+  letter-spacing: -0.01em;
+}
+
+/* Horizontal Swipeable Filter Pills Bar */
+.filter-pill-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.2rem;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.filter-pill-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  background: #FFFFFF;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.filter-pill:hover {
+  background: var(--bg-card-subtle);
+  color: var(--text-primary);
+}
+
+.filter-pill.active {
+  background: #0F172A;
+  color: #FFFFFF;
+  border-color: #0F172A;
+}
+
+/* Smart-Accordion Card Styling */
+.accordion-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.accordion-card:hover {
+  border-color: #CBD5E1;
+}
+
+.accordion-card.is-expanded {
+  border-color: #0F172A;
+  box-shadow: var(--shadow-elevated);
+}
+
+.accordion-header {
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.accordion-subnav {
+  display: flex;
+  background: #F1F5F9;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+  margin-bottom: 0.75rem;
+}
+
+.accordion-subnav-btn {
+  flex: 1;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.accordion-subnav-btn.active {
+  background: #FFFFFF;
+  color: #0F172A;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+/* Modal Bottom-Sheet for Mobile */
+@media (max-width: 640px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-content {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    max-height: 85vh;
+    animation: sheetSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes sheetSlideUp {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .main-content-mobile {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+
 /* D3 Tooltip */
 .d3-tooltip {
   position: absolute;
@@ -370,3 +580,4 @@ body {
   border-style: solid;
   border-color: #0F172A transparent transparent transparent;
 }
+

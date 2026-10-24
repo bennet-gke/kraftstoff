@@ -461,8 +461,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Navigation Tabs */}
-          <nav className="nav-pill-group">
+          {/* Navigation Tabs (Desktop only; on mobile rendered in iOS bottom bar) */}
+          <nav className="nav-pill-group desktop-nav-pills">
             <button
               className={`nav-pill-btn ${activeTab === 'stations' ? 'active' : ''}`}
               onClick={() => setActiveTab('stations')}
@@ -576,7 +576,7 @@ export default function App() {
       </header>
 
       {/* Hauptinhalt */}
-      <main style={{ flex: 1, paddingBottom: '2.5rem' }}>
+      <main className="main-content-mobile" style={{ flex: 1, paddingBottom: '2.5rem' }}>
 
         {/* Versteckter File-Input für 1-Klick Import aus iCloud */}
         <input
@@ -1003,6 +1003,53 @@ export default function App() {
           onClose={() => setSelectedStationForDetail(null)}
         />
       )}
+
+      {/* iOS BOTTOM NAVIGATION BAR (Thumb Ergonomics für Smartphones) */}
+      <nav className="mobile-bottom-nav">
+        <button
+          type="button"
+          className={`bottom-nav-item ${activeTab === 'stations' ? 'active' : ''}`}
+          onClick={() => setActiveTab('stations')}
+        >
+          <div className="nav-icon-wrap">
+            <Fuel size={18} />
+          </div>
+          <span className="bottom-nav-label">Radar</span>
+        </button>
+
+        <button
+          type="button"
+          className={`bottom-nav-item ${activeTab === 'map' ? 'active' : ''}`}
+          onClick={() => setActiveTab('map')}
+        >
+          <div className="nav-icon-wrap">
+            <MapIcon size={18} />
+          </div>
+          <span className="bottom-nav-label">Karte</span>
+        </button>
+
+        <button
+          type="button"
+          className={`bottom-nav-item ${activeTab === 'analytics' ? 'active' : ''}`}
+          onClick={() => setActiveTab('analytics')}
+        >
+          <div className="nav-icon-wrap">
+            <BarChart3 size={18} />
+          </div>
+          <span className="bottom-nav-label">Trends</span>
+        </button>
+
+        <button
+          type="button"
+          className={`bottom-nav-item ${activeTab === 'ml' ? 'active' : ''}`}
+          onClick={() => setActiveTab('ml')}
+        >
+          <div className="nav-icon-wrap">
+            <Sparkles size={18} />
+          </div>
+          <span className="bottom-nav-label">KI (TF.js)</span>
+        </button>
+      </nav>
 
     </div>
   );
