@@ -45,7 +45,7 @@ export default function VehicleGarageModal({
       setTimeout(async () => {
         try {
           const res = await backupService.directSyncToICloud();
-          setFeedbackToast(res.method === 'direct-file' ? '✓ Gespeichert & direkt in iCloud Drive synchronisiert!' : '✓ Fahrzeug gespeichert & Datei für iCloud erzeugt!');
+          setFeedbackToast(res.method === 'direct-file' ? '✓ Gespeichert & direkt in iCloud Drive synchronisiert!' : '✓ Fahrzeug erfolgreich gespeichert!');
         } catch {
           setFeedbackToast('✓ Fahrzeug lokal gespeichert!');
         }

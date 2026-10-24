@@ -55,7 +55,11 @@ export default function StationMapView({
   onUpdateRadius,
   onLocateGps,
   activeRoute,
+  routes = [],
+  onSelectRoute,
   activeVehicle,
+  vehicles = [],
+  onSelectVehicle,
   fuelType = 'diesel',
   onSelectFuel,
   selectedStation,
@@ -67,6 +71,13 @@ export default function StationMapView({
   const layerGroupRef = useRef(null);
   const tileLayerRef = useRef(null);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState(true);
+  const [mapMode, setMapMode] = useState(() => (activeRoute ? 'route' : 'location'));
+
+  // Halte mapMode synchron mit activeRoute
+  useEffect(() => {
+    setMapMode(activeRoute ? 'route' : 'location');
+  }, [activeRoute]);
+
   const [mapProvider, setMapProvider] = useState(() => {
     try {
       return localStorage.getItem('tank_app_map_style') || 'osm';
@@ -155,8 +166,17 @@ export default function StationMapView({
 
     layerGroup.clearLayers();
 
-    // 1. Zentriere Karte zuverlässig auf den gewählten Standort
-    if (activeLocation && activeLocation.lat && activeLocation.lng) {
+    // 1. Zentriere Karte zuverlässig auf Route oder Standort
+    if (activeRoute && ((activeRoute.polylineCoords && activeRoute.polylineCoords.length > 1) || (activeRoute.waypoints && activeRoute.waypoints.length > 1))) {
+      const latlngs = (activeRoute.polylineCoords && activeRoute.polylineCoords.length > 1)
+        ? activeRoute.polylineCoords
+        : activeRoute.waypoints.map((wp) => [wp.lat, wp.lng]);
+      map.invalidateSize();
+      try {
+        const bounds = L.latLngBounds(latlngs);
+        map.fitBounds(bounds, { padding: [45, 45], maxZoom: 14 });
+      } catch {}
+    } else if (activeLocation && activeLocation.lat && activeLocation.lng) {
       let targetZoom = 12;
       const rad = activeLocation.radiusKm || 5;
       if (rad <= 3) targetZoom = 13;
@@ -317,30 +337,122 @@ export default function StationMapView({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.45rem' }}>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0, flex: 1 }}>
-            <MapPin size={14} color="#0F172A" style={{ flexShrink: 0 }} />
-            <select
-              value={activeLocation?.id || ''}
-              onChange={(e) => onSelectLocation && onSelectLocation(e.target.value)}
-              style={{
-                width: '100%',
-                maxWidth: '180px',
-                padding: '0.28rem 0.5rem',
-                borderRadius: '8px',
-                border: '1px solid #CBD5E1',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                color: '#0F172A',
-                background: '#FFFFFF',
-                cursor: 'pointer',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
+            {/* Apple-Style Ort vs Route Switcher auf der Karte */}
+            <div style={{ display: 'inline-flex', background: '#F1F5F9', borderRadius: '8px', padding: '2px', gap: '2px', flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMapMode('location');
+                  if (onSelectRoute) onSelectRoute(null);
+                }}
+                style={{
+                  border: 'none',
+                  background: mapMode === 'location' ? '#0F172A' : 'transparent',
+                  color: mapMode === 'location' ? '#FFFFFF' : '#64748B',
+                  borderRadius: '6px',
+                  padding: '0.18rem 0.42rem',
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.2rem',
+                }}
+                title="Standort-Modus"
+              >
+                <MapPin size={11} />
+                <span>Ort</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMapMode('route');
+                  if (routes.length > 0 && (!activeRoute || !routes.some((r) => r.id === activeRoute.id))) {
+                    if (onSelectRoute) onSelectRoute(routes[0].id);
+                  }
+                }}
+                style={{
+                  border: 'none',
+                  background: mapMode === 'route' ? '#0F172A' : 'transparent',
+                  color: mapMode === 'route' ? '#FFFFFF' : '#64748B',
+                  borderRadius: '6px',
+                  padding: '0.18rem 0.42rem',
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.2rem',
+                }}
+                title="Routen-Modus"
+              >
+                <Navigation size={11} />
+                <span>Route</span>
+              </button>
+            </div>
+
+            {mapMode === 'location' ? (
+              <select
+                value={activeLocation?.id || ''}
+                onChange={(e) => {
+                  if (e.target.value === '__gps__') {
+                    if (onLocateGps) onLocateGps();
+                    if (onSelectRoute) onSelectRoute(null);
+                  } else {
+                    if (onSelectLocation) onSelectLocation(e.target.value);
+                    if (onSelectRoute) onSelectRoute(null);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  maxWidth: '160px',
+                  padding: '0.24rem 0.4rem',
+                  borderRadius: '8px',
+                  border: '1px solid #CBD5E1',
+                  fontWeight: 700,
+                  fontSize: '0.74rem',
+                  color: '#0F172A',
+                  background: '#FFFFFF',
+                  cursor: 'pointer',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                <option value="__gps__">📍 Aktueller Ort (GPS)</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    📍 {loc.name} ({Number(loc.radiusKm || 5)} km)
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={activeRoute?.id || (routes[0]?.id || '')}
+                onChange={(e) => onSelectRoute && onSelectRoute(e.target.value)}
+                style={{
+                  width: '100%',
+                  maxWidth: '160px',
+                  padding: '0.24rem 0.4rem',
+                  borderRadius: '8px',
+                  border: '1.5px solid #93C5FD',
+                  fontWeight: 700,
+                  fontSize: '0.74rem',
+                  color: '#1D4ED8',
+                  background: '#EFF6FF',
+                  cursor: 'pointer',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {routes.length === 0 ? (
+                  <option disabled>Keine Route vorhanden</option>
+                ) : (
+                  routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      🧭 {r.name} ({Number(r.totalDistanceKm || 0).toFixed(1)} km)
+                    </option>
+                  ))
+                )}
+              </select>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
@@ -467,8 +579,8 @@ export default function StationMapView({
                 flexWrap: 'wrap',
               }}
             >
-              {/* Radius-Slider */}
-              {onUpdateRadius && activeLocation && (
+              {/* Radius-Slider (nur im Ort-Modus relevant) */}
+              {mapMode === 'location' && onUpdateRadius && activeLocation && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
                   <Sliders size={12} color="#64748B" />
                   <span>Radius:</span>
@@ -484,6 +596,36 @@ export default function StationMapView({
                   <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
                     {activeLocation.radiusKm} km
                   </strong>
+                </div>
+              )}
+
+              {/* Fahrzeug-Direktwechsler auf der Karte */}
+              {vehicles && vehicles.length > 0 && onSelectVehicle && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#64748B' }}>
+                  <Car size={12} color="#0F172A" />
+                  <select
+                    value={activeVehicle?.id || ''}
+                    onChange={(e) => onSelectVehicle(e.target.value)}
+                    style={{
+                      padding: '0.15rem 0.4rem',
+                      borderRadius: '6px',
+                      border: '1px solid #CBD5E1',
+                      fontSize: '0.68rem',
+                      fontWeight: 600,
+                      background: '#FFFFFF',
+                      color: '#0F172A',
+                      maxWidth: '135px',
+                      textOverflow: 'ellipsis',
+                      cursor: 'pointer',
+                    }}
+                    title="Fahrzeug wechseln"
+                  >
+                    {vehicles.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        🚗 {v.name} ({v.consumptionL100km}L)
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 

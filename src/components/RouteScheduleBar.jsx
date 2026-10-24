@@ -12,6 +12,7 @@ import {
   X,
   Check,
   ArrowUpDown,
+  Plus,
 } from 'lucide-react';
 import { QUICK_CITIES } from '../services/locationService';
 
@@ -27,12 +28,16 @@ export default function RouteScheduleBar({
   sortBy = 'score',
   onSelectSort,
   activeVehicle,
+  vehicles = [],
+  onSelectVehicle,
   onOpenVehicleModal,
   activeLocation,
-  locations: _locations = [],
-  onSelectLocation: _onSelectLocation,
+  locations = [],
+  onSelectLocation,
   onUpdateRadius,
-  activeRoute: _activeRoute,
+  activeRoute = null,
+  routes = [],
+  onSelectRoute,
   onOpenLocationRouteModal,
   onLocateGps,
   onSelectQuickCity,
@@ -47,6 +52,15 @@ export default function RouteScheduleBar({
   const [timeLeft, setTimeLeft] = useState('');
   // 'location' | 'vehicle' | 'fuel' | 'sort' | null
   const [activeDrawer, setActiveDrawer] = useState(null);
+  // 'location' | 'route' inside the location drawer
+  const [locationSubTab, setLocationSubTab] = useState(() => (activeRoute ? 'route' : 'location'));
+
+  // Synchronisiere SubTab mit aktivem Zustand, wenn Drawer geöffnet wird
+  useEffect(() => {
+    if (activeDrawer === 'location') {
+      setLocationSubTab(activeRoute ? 'route' : 'location');
+    }
+  }, [activeDrawer, activeRoute]);
 
   // Live-Countdown für "30 Min pausieren"
   useEffect(() => {
@@ -109,15 +123,29 @@ export default function RouteScheduleBar({
       {/* 1. HORIZONTALE FILTER-PILL-LEISTE (Mobil-optimiert, Swipeable) */}
       <div className="filter-pill-bar">
         
-        {/* Pill 1: Ort & Radius */}
+        {/* Pill 1: Ort ODER Route */}
         <button
           type="button"
           className={`filter-pill ${activeDrawer === 'location' ? 'active' : ''}`}
           onClick={() => toggleDrawer('location')}
-          title="Standort & Suchradius ändern"
+          title={activeRoute ? `Aktive Route: ${activeRoute.name}` : `Aktiver Standort: ${activeLocation?.name || 'Ort'}`}
+          style={{
+            borderColor: activeRoute && activeDrawer !== 'location' ? '#93C5FD' : undefined,
+            background: activeRoute && activeDrawer !== 'location' ? '#EFF6FF' : undefined,
+          }}
         >
-          <MapPin size={13} color={activeDrawer === 'location' ? '#FFFFFF' : '#0F172A'} />
-          <span>{activeLocation?.name || 'Ort'} ({Number(activeLocation?.radiusKm || 5)} km)</span>
+          {activeRoute ? (
+            <Navigation size={13} color={activeDrawer === 'location' ? '#FFFFFF' : '#2563EB'} />
+          ) : (
+            <MapPin size={13} color={activeDrawer === 'location' ? '#FFFFFF' : '#0F172A'} />
+          )}
+          <span>
+            {activeRoute ? (
+              <>Route: <strong>{activeRoute.name}</strong></>
+            ) : (
+              <>{activeLocation?.name || 'Ort'} ({Number(activeLocation?.radiusKm || 5)} km)</>
+            )}
+          </span>
           <ChevronDown size={12} style={{ opacity: 0.6 }} />
         </button>
 
@@ -126,7 +154,7 @@ export default function RouteScheduleBar({
           type="button"
           className={`filter-pill ${activeDrawer === 'vehicle' ? 'active' : ''}`}
           onClick={() => toggleDrawer('vehicle')}
-          title="Fahrzeug & Verbrauch anpassen"
+          title="Fahrzeug wechseln oder Verbrauch anpassen"
         >
           <Car size={13} color={activeDrawer === 'vehicle' ? '#FFFFFF' : '#0F172A'} />
           <span>{activeVehicle?.name || 'Auto'} ({effectiveConsumption}L)</span>
@@ -215,7 +243,7 @@ export default function RouteScheduleBar({
 
       </div>
 
-      {/* 2. SCHLANKE QUICK-DRAWER DETAILS (Öffnet sich nur bei Klick auf ein Pill) */}
+      {/* 2. SCHLANKE QUICK-DRAWER DETAILS (Öffnet sich bei Klick auf ein Pill) */}
       {activeDrawer && (
         <div
           className="clean-card"
@@ -229,166 +257,489 @@ export default function RouteScheduleBar({
             animation: 'fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
-          {/* DRAWER 1: STANDORT & RADIUS */}
+          {/* DRAWER 1: STANDORT & ROUTE WECHSLER */}
           {activeDrawer === 'location' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                  Standort & Suchradius
-                </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              {/* Header mit Apple-Style Schieberegler [ Ort | Route ] */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    background: '#F1F5F9',
+                    borderRadius: '10px',
+                    padding: '3px',
+                    gap: '3px',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLocationSubTab('location')}
+                    style={{
+                      border: 'none',
+                      background: locationSubTab === 'location' ? '#0F172A' : 'transparent',
+                      color: locationSubTab === 'location' ? '#FFFFFF' : '#475569',
+                      borderRadius: '8px',
+                      padding: '0.35rem 0.8rem',
+                      fontSize: '0.76rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <MapPin size={13} />
+                    <span>Ort & Radius</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLocationSubTab('route')}
+                    style={{
+                      border: 'none',
+                      background: locationSubTab === 'route' ? '#0F172A' : 'transparent',
+                      color: locationSubTab === 'route' ? '#FFFFFF' : '#475569',
+                      borderRadius: '8px',
+                      padding: '0.35rem 0.8rem',
+                      fontSize: '0.76rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Navigation size={13} />
+                    <span>Fahrt-Route {routes.length > 0 && `(${routes.length})`}</span>
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => setActiveDrawer(null)}
-                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B' }}
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B', padding: '4px' }}
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              {/* Quick Cities */}
-              {onSelectQuickCity && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
-                  {QUICK_CITIES.map((qc) => {
-                    const isSelected = activeLocation?.name?.toLowerCase().includes(qc.name.toLowerCase());
-                    return (
-                      <button
-                        key={qc.id}
-                        type="button"
-                        onClick={() => {
-                          onSelectQuickCity(qc);
-                          setActiveDrawer(null);
-                        }}
-                        style={{
-                          border: 'none',
-                          background: isSelected ? '#0F172A' : '#F1F5F9',
-                          color: isSelected ? '#FFFFFF' : '#475569',
-                          padding: '0.3rem 0.6rem',
-                          borderRadius: '6px',
-                          fontSize: '0.75rem',
-                          fontWeight: isSelected ? 700 : 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {qc.name}
-                      </button>
-                    );
-                  })}
-
+              {/* UNTER-TAB A: ORTE */}
+              {locationSubTab === 'location' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {/* 1. Aktueller Standort (GPS) */}
                   {onLocateGps && (
                     <button
                       type="button"
                       onClick={() => {
                         onLocateGps();
+                        if (onSelectRoute) onSelectRoute(null);
                         setActiveDrawer(null);
                       }}
                       style={{
-                        border: '1px solid #BAE6FD',
-                        background: '#F0F9FF',
-                        color: '#0369A1',
-                        padding: '0.3rem 0.6rem',
-                        borderRadius: '6px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '0.3rem',
+                        justifyContent: 'space-between',
+                        padding: '0.65rem 0.85rem',
+                        borderRadius: '12px',
+                        border: activeLocation?.id === 'loc-current-gps' && !activeRoute ? '1.5px solid #0284C7' : '1px solid #BAE6FD',
+                        background: activeLocation?.id === 'loc-current-gps' && !activeRoute ? '#F0F9FF' : '#F8FAFC',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease',
                       }}
                     >
-                      <LocateFixed size={12} color="#0284C7" />
-                      <span>GPS</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+                        <div
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '8px',
+                            background: '#E0F2FE',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <LocateFixed size={15} color="#0284C7" />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0369A1' }}>
+                            Aktueller Ort (GPS)
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                            Live-Standort über Smartphone GPS erfassen
+                          </div>
+                        </div>
+                      </div>
+                      {activeLocation?.id === 'loc-current-gps' && !activeRoute && (
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#0284C7', background: '#E0F2FE', padding: '0.15rem 0.5rem', borderRadius: '9999px' }}>
+                          Aktiv
+                        </span>
+                      )}
                     </button>
                   )}
-                </div>
-              )}
 
-              {/* Radius Regler */}
-              {onUpdateRadius && (
-                <div style={{ background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.3rem' }}>
-                    <span style={{ color: '#64748B' }}>Suchradius:</span>
-                    <strong className="num-mono" style={{ color: '#0F172A' }}>
-                      {Number(activeLocation?.radiusKm || 5)} km
-                    </strong>
+                  {/* 2. Gespeicherte Orte */}
+                  <div>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+                      Gespeicherte Orte ({locations.length})
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '180px', overflowY: 'auto', paddingRight: '2px' }}>
+                      {locations.map((loc) => {
+                        const isSelected = !activeRoute && activeLocation?.id === loc.id;
+                        return (
+                          <button
+                            key={loc.id}
+                            type="button"
+                            onClick={() => {
+                              onSelectLocation(loc.id, loc);
+                              if (onSelectRoute) onSelectRoute(null);
+                              setActiveDrawer(null);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '0.55rem 0.75rem',
+                              borderRadius: '10px',
+                              border: isSelected ? '1.5px solid #0F172A' : '1px solid #E2E8F0',
+                              background: isSelected ? '#0F172A' : '#FFFFFF',
+                              color: isSelected ? '#FFFFFF' : '#0F172A',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <div style={{ minWidth: 0, flex: 1, paddingRight: '0.5rem' }}>
+                              <div style={{ fontSize: '0.79rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {loc.name}
+                              </div>
+                              {loc.address && (
+                                <div style={{ fontSize: '0.68rem', opacity: isSelected ? 0.8 : 0.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
+                                  {loc.address}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 600,
+                                  background: isSelected ? 'rgba(255,255,255,0.2)' : '#F1F5F9',
+                                  color: isSelected ? '#FFFFFF' : '#475569',
+                                  padding: '0.12rem 0.45rem',
+                                  borderRadius: '6px',
+                                }}
+                              >
+                                {Number(loc.radiusKm || 5)} km
+                              </span>
+                              {isSelected && <Check size={14} color="#38BDF8" />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min="2"
-                    max="25"
-                    step="1"
-                    value={Number(activeLocation?.radiusKm || 5)}
-                    onChange={(e) => activeLocation?.id && onUpdateRadius(activeLocation.id, parseFloat(e.target.value) || 5)}
-                    style={{ width: '100%', accentColor: '#0F172A', cursor: 'pointer' }}
-                  />
+
+                  {/* 3. Suchradius-Slider für aktiven Ort */}
+                  {onUpdateRadius && activeLocation && !activeRoute && (
+                    <div style={{ background: '#F8FAFC', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.3rem' }}>
+                        <span style={{ color: '#64748B' }}>Suchradius um {activeLocation.name}:</span>
+                        <strong className="num-mono" style={{ color: '#0F172A', fontWeight: 800 }}>
+                          {Number(activeLocation.radiusKm || 5)} km
+                        </strong>
+                      </div>
+                      <input
+                        type="range"
+                        min="2"
+                        max="25"
+                        step="1"
+                        value={Number(activeLocation.radiusKm || 5)}
+                        onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value) || 5)}
+                        style={{ width: '100%', accentColor: '#0F172A', cursor: 'pointer' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Quick Cities */}
+                  {onSelectQuickCity && (
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontWeight: 600, marginBottom: '0.3rem' }}>
+                        Schnellwechsel Stadt:
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                        {QUICK_CITIES.slice(0, 5).map((qc) => (
+                          <button
+                            key={qc.id}
+                            type="button"
+                            onClick={() => {
+                              onSelectQuickCity(qc);
+                              if (onSelectRoute) onSelectRoute(null);
+                              setActiveDrawer(null);
+                            }}
+                            style={{
+                              border: '1px solid #E2E8F0',
+                              background: '#F8FAFC',
+                              color: '#475569',
+                              padding: '0.22rem 0.5rem',
+                              borderRadius: '6px',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {qc.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setActiveDrawer(null);
+                      onOpenLocationRouteModal();
+                    }}
+                    style={{ width: '100%', fontSize: '0.76rem', borderRadius: '10px' }}
+                  >
+                    <Plus size={13} />
+                    <span>Neuen Ort anlegen / Orte verwalten...</span>
+                  </button>
                 </div>
               )}
 
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  setActiveDrawer(null);
-                  onOpenLocationRouteModal();
-                }}
-                style={{ width: '100%', fontSize: '0.76rem' }}
-              >
-                Orte, Routen & OSM-Korridor verwalten...
-              </button>
+              {/* UNTER-TAB B: ROUTEN */}
+              {locationSubTab === 'route' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+                      Gespeicherte Routen ({routes.length})
+                    </div>
+
+                    {routes.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '1.2rem', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                        <Navigation size={22} color="#94A3B8" style={{ margin: '0 auto 0.4rem' }} />
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
+                          Noch keine Route angelegt
+                        </div>
+                        <p style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem', marginBottom: '0.8rem' }}>
+                          Erstelle eine Fahrt-Route (z. B. Pendelstrecke), um günstige Tankstellen entlang deiner Strecke zu finden.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => {
+                            setActiveDrawer(null);
+                            onOpenLocationRouteModal();
+                          }}
+                          style={{ fontSize: '0.75rem' }}
+                        >
+                          + Erste Route anlegen
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '2px' }}>
+                        {routes.map((r) => {
+                          const isSelected = activeRoute?.id === r.id;
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => {
+                                if (onSelectRoute) onSelectRoute(r.id);
+                                setActiveDrawer(null);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '0.65rem 0.85rem',
+                                borderRadius: '10px',
+                                border: isSelected ? '1.5px solid #2563EB' : '1px solid #E2E8F0',
+                                background: isSelected ? '#1E293B' : '#FFFFFF',
+                                color: isSelected ? '#FFFFFF' : '#0F172A',
+                                cursor: 'pointer',
+                                textAlign: 'left',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1, paddingRight: '0.5rem' }}>
+                                <div style={{ fontSize: '0.82rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                  <Navigation size={13} color={isSelected ? '#60A5FA' : '#2563EB'} />
+                                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {r.name}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: '0.7rem', opacity: isSelected ? 0.8 : 0.6, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {r.startName || 'Start'} ➔ {r.endName || 'Ziel'} • Korridor ±{r.corridorRadiusKm || 2.5} km
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                                <span
+                                  style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 700,
+                                    background: isSelected ? 'rgba(59, 130, 246, 0.3)' : '#EFF6FF',
+                                    color: isSelected ? '#93C5FD' : '#1D4ED8',
+                                    padding: '0.15rem 0.5rem',
+                                    borderRadius: '6px',
+                                  }}
+                                >
+                                  {Number(r.totalDistanceKm || 0).toFixed(1)} km
+                                </span>
+                                {isSelected && <Check size={14} color="#60A5FA" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {activeRoute && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        if (onSelectRoute) onSelectRoute(null);
+                        setActiveDrawer(null);
+                      }}
+                      style={{ width: '100%', fontSize: '0.74rem', color: '#64748B' }}
+                    >
+                      Route abwählen (Zurück zu Ort-Radius)
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setActiveDrawer(null);
+                      onOpenLocationRouteModal();
+                    }}
+                    style={{ width: '100%', fontSize: '0.76rem', borderRadius: '10px' }}
+                  >
+                    <Plus size={13} />
+                    <span>Neue Route anlegen / Routen verwalten...</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
-          {/* DRAWER 2: FAHRZEUG & VERBRAUCH */}
+          {/* DRAWER 2: FAHRZEUG DIREKT WECHSELN & VERBRAUCH */}
           {activeDrawer === 'vehicle' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                  Fahrzeug & Verbrauch: {activeVehicle?.name || 'Auto'}
-                </span>
+                <div>
+                  <span style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A' }}>
+                    Fahrzeug wählen & Verbrauch
+                  </span>
+                  <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                    Aktuell: <strong>{activeVehicle?.name || 'Auto'}</strong> ({effectiveConsumption} L/100km)
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => setActiveDrawer(null)}
-                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B' }}
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748B', padding: '4px' }}
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              {/* Verbrauch Regler */}
-              <div style={{ background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.25rem' }}>
-                  <span style={{ color: '#64748B' }}>Realverbrauch:</span>
-                  <strong className="num-mono" style={{ color: '#0F172A' }}>
-                    {effectiveConsumption} L/100km
-                  </strong>
+              {/* 1. Direkte Fahrzeugauswahl aus allen gespeicherten Autos */}
+              <div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+                  Fahrzeug wechseln ({vehicles.length})
                 </div>
-                <input
-                  type="range"
-                  min="3.5"
-                  max="14.0"
-                  step="0.1"
-                  value={effectiveConsumption}
-                  onChange={(e) => onUpdateCustomConsumption(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: '#0F172A' }}
-                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '180px', overflowY: 'auto', paddingRight: '2px' }}>
+                  {vehicles.map((v) => {
+                    const isSelected = activeVehicle?.id === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => {
+                          if (onSelectVehicle) onSelectVehicle(v.id);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.6rem 0.8rem',
+                          borderRadius: '10px',
+                          border: isSelected ? '1.5px solid #0F172A' : '1px solid #E2E8F0',
+                          background: isSelected ? '#0F172A' : '#FFFFFF',
+                          color: isSelected ? '#FFFFFF' : '#0F172A',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <div style={{ minWidth: 0, flex: 1, paddingRight: '0.5rem' }}>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <Car size={14} color={isSelected ? '#38BDF8' : '#0F172A'} />
+                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {v.name}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.68rem', opacity: isSelected ? 0.85 : 0.65, marginTop: '2px' }}>
+                            {v.brand || 'Auto'} • {v.fuelType.toUpperCase()} • {v.consumptionL100km} L/100km • {v.tankCapacityL}L Tank
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                          {isSelected && <Check size={14} color="#38BDF8" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* Tankmenge Regler */}
-              <div style={{ background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.25rem' }}>
-                  <span style={{ color: '#64748B' }}>Zu tankende Menge:</span>
-                  <strong className="num-mono" style={{ color: '#0F172A' }}>
-                    {neededLiters} Liter
-                  </strong>
+              {/* 2. Schnellanpassung für das gewählte Fahrzeug */}
+              <div style={{ background: '#F8FAFC', padding: '0.75rem 0.85rem', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {/* Verbrauch Regler */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.25rem' }}>
+                    <span style={{ color: '#64748B' }}>Realverbrauch ({activeVehicle?.name}):</span>
+                    <strong className="num-mono" style={{ color: '#0F172A', fontWeight: 800 }}>
+                      {effectiveConsumption} L/100km
+                    </strong>
+                  </div>
+                  <input
+                    type="range"
+                    min="3.5"
+                    max="14.0"
+                    step="0.1"
+                    value={effectiveConsumption}
+                    onChange={(e) => onUpdateCustomConsumption(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: '#0F172A', cursor: 'pointer' }}
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="10"
-                  max="90"
-                  step="5"
-                  value={neededLiters}
-                  onChange={(e) => onUpdateCustomLiters(parseFloat(e.target.value))}
-                  style={{ width: '100%', accentColor: '#0F172A' }}
-                />
+
+                {/* Tankmenge Regler */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', marginBottom: '0.25rem' }}>
+                    <span style={{ color: '#64748B' }}>Zu tankende Menge:</span>
+                    <strong className="num-mono" style={{ color: '#0F172A', fontWeight: 800 }}>
+                      {neededLiters} Liter
+                    </strong>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="90"
+                    step="5"
+                    value={neededLiters}
+                    onChange={(e) => onUpdateCustomLiters(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: '#0F172A', cursor: 'pointer' }}
+                  />
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -400,7 +751,7 @@ export default function RouteScheduleBar({
                     style={{ flex: 1, fontSize: '0.72rem' }}
                   >
                     <RotateCcw size={11} />
-                    <span>Zurücksetzen</span>
+                    <span>Auf Werksdaten</span>
                   </button>
                 )}
                 <button
@@ -410,10 +761,10 @@ export default function RouteScheduleBar({
                     setActiveDrawer(null);
                     onOpenVehicleModal();
                   }}
-                  style={{ flex: 1, fontSize: '0.72rem' }}
+                  style={{ flex: 1, fontSize: '0.74rem', borderRadius: '10px' }}
                 >
-                  <Car size={12} />
-                  <span>Garage öffnen...</span>
+                  <Car size={13} />
+                  <span>+ Auto anlegen / Garage...</span>
                 </button>
               </div>
             </div>
@@ -486,12 +837,12 @@ export default function RouteScheduleBar({
                 </button>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem' }}>
                 {[
-                  { id: 'savings', label: 'Größte Netto-Ersparnis', desc: 'Kombiniert Cent/L & Spritkosten für Mehrweg' },
-                  { id: 'score', label: 'KI-Score Empfehlung', desc: 'TensorFlow.js Preisvorhersage & Stabilität' },
-                  { id: 'price', label: 'Günstigster Preis', desc: 'Reiner Literpreis an der Zapfsäule' },
-                  { id: 'distance', label: 'Geringste Distanz', desc: 'Nächste Tankstellen zuerst' },
+                  { id: 'score', label: 'KI-Score', desc: 'Empfehlung aus Preis, Zyklus & Umweg' },
+                  { id: 'savings', label: 'Netto-Ersparnis', desc: 'Reale Euro-Ersparnis abzüglich Sprit' },
+                  { id: 'price', label: 'Niedrigster Preis', desc: 'Reiner Zapfsäulenpreis pro Liter' },
+                  { id: 'distance', label: 'Kürzeste Distanz', desc: 'Nächste Tankstellen zuerst' },
                 ].map((s) => {
                   const isSelected = sortBy === s.id;
                   return (
@@ -503,26 +854,18 @@ export default function RouteScheduleBar({
                         setActiveDrawer(null);
                       }}
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '0.55rem 0.75rem',
-                        borderRadius: '6px',
+                        padding: '0.55rem 0.65rem',
+                        borderRadius: '8px',
                         border: `1px solid ${isSelected ? '#0F172A' : '#E2E8F0'}`,
-                        background: isSelected ? '#F8FAFC' : '#FFFFFF',
+                        background: isSelected ? '#0F172A' : '#F8FAFC',
+                        color: isSelected ? '#FFFFFF' : '#0F172A',
                         cursor: 'pointer',
                         textAlign: 'left',
+                        transition: 'all 0.15s ease',
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#0F172A' }}>
-                          {s.label}
-                        </div>
-                        <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
-                          {s.desc}
-                        </div>
-                      </div>
-                      {isSelected && <Check size={14} color="#059669" />}
+                      <div style={{ fontWeight: 700, fontSize: '0.78rem' }}>{s.label}</div>
+                      <div style={{ fontSize: '0.66rem', opacity: 0.7, marginTop: '2px' }}>{s.desc}</div>
                     </button>
                   );
                 })}

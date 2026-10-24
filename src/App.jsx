@@ -197,8 +197,40 @@ export default function App() {
   };
   const isPaused = dataService.isAlertsPaused();
 
-  // Standort- und Radius-Wechsler
+  // Fahrzeug direkt wechseln
+  const handleSelectVehicle = (id) => {
+    setActiveVehicleId(id);
+    vehicleService.setActiveVehicleId(id);
+    const targetVeh = vehicles.find((v) => v.id === id);
+    if (targetVeh?.fuelType && ['diesel', 'e10', 'e5'].includes(targetVeh.fuelType) && targetVeh.fuelType !== selectedFuel) {
+      setSelectedFuel(targetVeh.fuelType);
+      loadData(targetVeh.fuelType);
+    }
+  };
+
+  // Route auswählen oder deaktivieren
+  const handleSelectRoute = (id) => {
+    setActiveRouteId(id);
+    routeService.setActiveRouteId(id);
+    if (id) {
+      setDetourMode('route_corridor');
+      const targetRoute = routes.find((r) => r.id === id);
+      if (targetRoute) {
+        const start = targetRoute.startCoords || targetRoute.waypoints?.[0];
+        if (start?.lat && start?.lng) {
+          loadData(selectedFuel, { lat: start.lat, lng: start.lng, radiusKm: 15 });
+        }
+      }
+    } else {
+      setDetourMode('local_roundtrip');
+    }
+  };
+
+  // Standort- und Radius-Wechsler (deaktiviert automatisch Routen-Modus)
   const handleSelectLocation = (id, locObj = null) => {
+    setActiveRouteId(null);
+    routeService.setActiveRouteId(null);
+    setDetourMode('local_roundtrip');
     setActiveLocationId(id);
     locationService.setActiveLocationId(id);
     const target = locObj || locations.find((l) => l.id === id);
@@ -248,6 +280,9 @@ export default function App() {
   };
 
   const handleSelectQuickCity = (cityConfig) => {
+    setActiveRouteId(null);
+    routeService.setActiveRouteId(null);
+    setDetourMode('local_roundtrip');
     const res = locationService.switchToQuickCity(cityConfig);
     setLocations([...res.locations]);
     setActiveLocationId(res.location.id);
@@ -551,12 +586,16 @@ export default function App() {
             sortBy={sortBy}
             onSelectSort={setSortBy}
             activeVehicle={activeVehicle}
+            vehicles={vehicles}
+            onSelectVehicle={handleSelectVehicle}
             onOpenVehicleModal={() => setIsVehicleModalOpen(true)}
             activeLocation={activeLocation}
             locations={locations}
             onSelectLocation={handleSelectLocation}
             onUpdateRadius={handleUpdateRadius}
             activeRoute={activeRoute}
+            routes={routes}
+            onSelectRoute={handleSelectRoute}
             onOpenLocationRouteModal={() => setIsLocRouteModalOpen(true)}
             onLocateGps={handleLocateGps}
             onSelectQuickCity={handleSelectQuickCity}
@@ -704,7 +743,11 @@ export default function App() {
               onUpdateRadius={handleUpdateRadius}
               onLocateGps={handleLocateGps}
               activeRoute={activeRoute}
+              routes={routes}
+              onSelectRoute={handleSelectRoute}
               activeVehicle={activeVehicle}
+              vehicles={vehicles}
+              onSelectVehicle={handleSelectVehicle}
               fuelType={selectedFuel}
               onSelectFuel={handleSelectFuel}
               selectedStation={selectedStationForDetail}

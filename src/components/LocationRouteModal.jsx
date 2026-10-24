@@ -159,7 +159,7 @@ export default function LocationRouteModal({
               success: true,
               message: res.method === 'direct-file'
                 ? `✓ Standort "${newLoc.name}" (${newLoc.lat}, ${newLoc.lng}) angelegt & in iCloud gesichert!`
-                : `✓ Standort "${newLoc.name}" angelegt und in Datei gesichert!`,
+                : `✓ Standort "${newLoc.name}" erfolgreich angelegt!`,
             });
           } catch {
             setGeoFeedback({ success: true, message: `Standort "${newLoc.name}" angelegt!` });

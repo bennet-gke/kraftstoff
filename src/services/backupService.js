@@ -201,11 +201,12 @@ class BackupService {
       };
     }
 
-    // Fallback: Browser-Download
-    this.downloadBackupFile('kraftstoff_daten.json');
+    // Wenn kein lokaler Node-Server erreichbar ist (z.B. auf Vercel oder im Safari auf iOS),
+    // niemals ungefragt ein Datei-Download-Fenster öffnen!
     return {
       success: true,
-      method: 'download',
+      method: 'local-storage',
+      message: 'Daten im lokalen Gerätespeicher gesichert.',
     };
   }
 
