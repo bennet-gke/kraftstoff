@@ -13,7 +13,10 @@
 * **Kartellamt Reaktions-Radar:** Erkennt Preissprünge der Marktführer (Aral, Shell) und berechnet das Reaktionsfenster (z.B. noch 30 Minuten), bevor Discounter (JET, HEM, Total) nachziehen.
 * **Personalisierter Tank-Strategie-Agent:** Optimal-Stopping-Algorithmus basierend auf Tankfüllstand (% des aktiven Fahrzeugs), Verbrauch und dem prognostizierten Wochentiefstpreis.
 
-### 2. 🗺️ Multi-Provider Geocoding & Routen-Korridor
+### 2. 🗺️ Immersive Vollbild-Karte & Multi-Provider Geocoding
+* **100% Free & Keyless Tile-Engine:** Dynamischer Umschalter zwischen farbenfrohem **OpenStreetMap (OSM)**, modernem **Esri World Street Map** und echtem **Esri Satelliten-Luftbild** – komplett ohne Registrierung oder API-Key.
+* **Apple-Design Vollbild:** Edler, weicher weißer Vignette-Verlauf an den Bildschirmrändern und schwebendes, transparentes Apple-Style Bedienpanel.
+* **Touch-optimiert:** Gestengesteuertes Zoomen (Pinch-to-Zoom mit zwei Fingern) ohne störende Buttons.
 * **Robuste Geocoding-Pipeline:** Tiered Geocoding über **Photon by Komoot**, **Open-Meteo**, **OpenStreetMap Nominatim** und integriertes Offline-Lexikon für über 40 deutsche Großstädte.
 * **1-Klick GPS-Standort:** Erkennt deinen echten Standort sofort und generiert Tankstellen im gewählten Suchradius.
 * **Fahrt-Routen & Korridor-Puffer:** Berechnung von Wegstrecken zwischen zwei Orten und automatische Filterung von Tankstellen entlang des Fahrtkorridors.
@@ -94,7 +97,7 @@ Dank des integrierten Service Workers und Web App Manifests kann die Anwendung n
 * **Frontend:** React 19, Vite 8, Lucide React
 * **Machine Learning:** TensorFlow.js (`@tensorflow/tfjs`) mit IndexedDB-Storage
 * **Visualisierung:** D3.js (`d3`, `d3-scale`, `d3-shape`, `d3-time`)
-* **Kartenmaterial:** Leaflet & Esri World Light Canvas, OpenStreetMap Nominatim, Photon by Komoot
+* **Kartenmaterial:** Leaflet (OpenStreetMap Bunt, Esri Street, Esri Satellit), OpenStreetMap Nominatim, Photon by Komoot
 * **Design & UI:** Modernes minimalistisches UI-System (Clean Slate Palette, Glassmorphism, Micro-Animations)
 * **Backend (optional):** Supabase (PostgreSQL, Edge Functions, pg_cron)
 
