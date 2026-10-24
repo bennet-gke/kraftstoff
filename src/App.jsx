@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Fuel,
   Map as MapIcon,
@@ -12,15 +12,12 @@ import {
   RefreshCw,
   ChevronRight,
   Cloud,
-  Download,
-  Upload,
 } from 'lucide-react';
 
 import { dataService } from './services/dataService';
 import { vehicleService } from './services/vehicleService';
 import { locationService } from './services/locationService';
 import { routeService } from './services/routeService';
-import { backupService } from './services/backupService';
 import { notificationService } from './services/notificationService';
 
 import { evaluatePriceEngine } from './engine/adaptiveAverage';
@@ -87,17 +84,7 @@ export default function App() {
   const [selectedStationForDetail, setSelectedStationForDetail] = useState(null);
 
   const [syncFeedback, setSyncFeedback] = useState(null);
-  const [notifPermission, setNotifPermission] = useState('default');
-
-  const directFileInputRef = useRef(null);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setNotifPermission(notificationService.getPermission());
-    }
-  }, []);
-
-  // iCloud Sync Handler
+  // iCloud Sync Handler (wird vom ICloudSyncModal aufgerufen)
   const handleICloudSyncComplete = (importedData) => {
     if (importedData.vehicles) setVehicles([...importedData.vehicles]);
     if (importedData.activeVehicleId) setActiveVehicleId(importedData.activeVehicleId);
@@ -114,88 +101,6 @@ export default function App() {
     const fuel = importedData.userSettings?.fuelPreference || selectedFuel;
     if (fuel !== selectedFuel) setSelectedFuel(fuel);
     loadData(fuel, targetLoc);
-  };
-
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  // 1-Klick Direkt-Sync aus iCloud Drive (ohne Finder-Dialog!)
-  const handleSyncFromICloud = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await backupService.directSyncFromICloud();
-      if (res.requiresManualFile) {
-        // Fallback für Standalone/Remote-Betrieb: Öffne Dateiauswahl
-        directFileInputRef.current?.click();
-      } else {
-        handleICloudSyncComplete(res.data);
-        notificationService.playAlertChime();
-        setSyncFeedback({
-          type: 'success',
-          message: `✓ In 0.1s synchronisiert! ${res.locationCount} Standorte & ${res.vehicleCount} Fahrzeuge direkt aus iCloud Drive geladen.`,
-        });
-        setTimeout(() => setSyncFeedback(null), 5000);
-      }
-    } catch (err) {
-      setSyncFeedback({
-        type: 'error',
-        message: `Hinweis: ${err.message}`,
-      });
-      setTimeout(() => setSyncFeedback(null), 6000);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // 1-Klick Direkt-Sync in iCloud Drive (ohne Finder-Dialog!)
-  const handleSyncToICloud = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await backupService.directSyncToICloud();
-      notificationService.playAlertChime();
-      if (res.method === 'direct-file') {
-        setSyncFeedback({
-          type: 'success',
-          message: `✓ Direkt in iCloud Drive gesichert (${res.directPath})!`,
-        });
-      } else {
-        setSyncFeedback({
-          type: 'success',
-          message: '✓ Datei "kraftstoff_daten.json" heruntergeladen! In deinem iCloud Drive Ordner ablegen.',
-        });
-      }
-      setTimeout(() => setSyncFeedback(null), 5000);
-    } catch (err) {
-      setSyncFeedback({
-        type: 'error',
-        message: `Fehler beim Sichern: ${err.message}`,
-      });
-      setTimeout(() => setSyncFeedback(null), 5000);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleDirectFileImport = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const res = await backupService.importBackupFile(file);
-      handleICloudSyncComplete(res.data);
-      notificationService.playAlertChime();
-      setSyncFeedback({
-        type: 'success',
-        message: `✓ Alles aktualisiert! ${res.locationCount} Standorte & ${res.vehicleCount} Fahrzeuge übernommen • Live-Preise neu berechnet.`,
-      });
-      setTimeout(() => setSyncFeedback(null), 5000);
-    } catch (err) {
-      setSyncFeedback({
-        type: 'error',
-        message: `Fehler beim Laden der iCloud-Datei: ${err.message}`,
-      });
-      setTimeout(() => setSyncFeedback(null), 5000);
-    } finally {
-      if (directFileInputRef.current) directFileInputRef.current.value = '';
-    }
   };
 
   // Lade Tankstellendaten
@@ -578,128 +483,9 @@ export default function App() {
       {/* Hauptinhalt */}
       <main className="main-content-mobile" style={{ flex: 1, paddingBottom: '2.5rem' }}>
 
-        {/* Versteckter File-Input für 1-Klick Import aus iCloud */}
-        <input
-          type="file"
-          ref={directFileInputRef}
-          accept=".json,application/json"
-          onChange={handleDirectFileImport}
-          style={{ display: 'none' }}
-        />
 
-        {/* Schlanke, aufgeräumte Synchronisations- und Statusleiste */}
-        <div
-          className="clean-card"
-          style={{
-            marginBottom: '1rem',
-            padding: '0.65rem 1rem',
-            background: '#FFFFFF',
-            border: '1px solid #E2E8F0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.6rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: '#0F172A',
-                color: '#FFFFFF',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <Cloud size={16} color="#38BDF8" />
-            </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>
-                  iCloud Drive
-                </span>
-                <span
-                  className="badge badge-gray"
-                  style={{
-                    fontSize: '0.64rem',
-                    padding: '0.12rem 0.45rem',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.3rem',
-                  }}
-                >
-                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#059669', display: 'inline-block' }} />
-                  <span>Live synchronisiert</span>
-                </span>
-                {notifPermission !== 'granted' && (
-                  <button
-                    onClick={() => setIsPushModalOpen(true)}
-                    className="badge badge-neutral"
-                    style={{ fontSize: '0.64rem', cursor: 'pointer', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                    title="Mitteilungen einschalten"
-                  >
-                    <BellRing size={10} color="#0284C7" />
-                    <span>Preisalarm aktivieren</span>
-                  </button>
-                )}
-              </div>
-              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.1rem' }}>
-                {activeLocation?.name} ({activeLocation?.radiusKm} km) • {activeVehicle?.name} ({activeVehicle?.consumptionL100km} L) • <span style={{ textTransform: 'uppercase', fontWeight: 600 }}>{selectedFuel}</span>
-              </div>
-            </div>
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
-            {/* 1-Klick Direkt-Sync aus iCloud Drive */}
-            <button
-              onClick={handleSyncFromICloud}
-              disabled={isSyncing}
-              className="btn btn-primary btn-sm"
-              style={{
-                fontSize: '0.76rem',
-                padding: '0.35rem 0.75rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                cursor: isSyncing ? 'not-allowed' : 'pointer',
-              }}
-              title="Aktualisiert alle Daten und Preise sofort aus deinem iCloud Drive"
-            >
-              <Upload size={12} color="#38BDF8" className={isSyncing ? 'animate-spin' : ''} />
-              <span>{isSyncing ? 'Lade...' : 'Aus iCloud laden'}</span>
-            </button>
 
-            {/* In iCloud sichern */}
-            <button
-              onClick={handleSyncToICloud}
-              disabled={isSyncing}
-              className="btn btn-secondary btn-sm"
-              style={{ fontSize: '0.76rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
-              title="Speichert alle aktuellen Orte, Autos & Einstellungen in deine iCloud Drive Datei"
-            >
-              <Download size={12} color="#059669" />
-              <span>Sichern</span>
-            </button>
-
-            {/* Preise neu abrufen */}
-            <button
-              onClick={() => loadData(selectedFuel)}
-              disabled={isRefreshing}
-              className="btn btn-secondary btn-sm"
-              style={{ fontSize: '0.76rem', padding: '0.35rem 0.6rem' }}
-              title="Preise vom Server neu abrufen"
-            >
-              <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
 
         {/* Feedback Banner nach Synchronisation */}
         {syncFeedback && (
