@@ -95,9 +95,6 @@ export default function StationMapView({
       zoomControl: false,
     });
 
-    // Zoom Control unten rechts (kollidiert nicht mit dem schwebenden Dock)
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-
     // Initialer Kachel-Layer: OpenStreetMap (Standard: 100% kostenlos, bunt, ohne API-Key)
     const initialProv = MAP_PROVIDERS[mapProvider] || MAP_PROVIDERS.osm;
     const tileLayer = L.tileLayer(initialProv.url, {
