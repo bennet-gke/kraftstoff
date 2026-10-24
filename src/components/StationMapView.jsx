@@ -16,9 +16,35 @@ import {
   TrendingDown,
   TrendingUp,
   Car,
+  Layers,
 } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { QUICK_CITIES } from '../services/locationService';
+
+// 100% kostenlose, kartenstabile Tile-Provider ohne API-Key
+const MAP_PROVIDERS = {
+  osm: {
+    id: 'osm',
+    name: 'Bunt (OSM)',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  },
+  esriStreet: {
+    id: 'esriStreet',
+    name: 'Clean (Esri)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 19,
+  },
+  esriSat: {
+    id: 'esriSat',
+    name: 'Satellit',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri &mdash; Maxar, Earthstar',
+    maxZoom: 19,
+  },
+};
 
 export default function StationMapView({
   stations = [],
@@ -39,9 +65,24 @@ export default function StationMapView({
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
+  const tileLayerRef = useRef(null);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState(true);
+  const [mapProvider, setMapProvider] = useState(() => {
+    try {
+      return localStorage.getItem('tank_app_map_style') || 'osm';
+    } catch {
+      return 'osm';
+    }
+  });
 
-  // Initialisiere Leaflet Map mit bunter, lebendiger Vektorkarte (CartoDB Voyager)
+  const handleSelectMapProvider = (newProvider) => {
+    setMapProvider(newProvider);
+    try {
+      localStorage.setItem('tank_app_map_style', newProvider);
+    } catch {}
+  };
+
+  // Initialisiere Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -57,12 +98,13 @@ export default function StationMapView({
     // Zoom Control unten rechts (kollidiert nicht mit dem schwebenden Dock)
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // CartoDB Voyager: Wunderschöne, lebendige & bunte Vektorkarte (wie Apple/Google Maps mit grünen Parks, blauen Seen & Straßen)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: 'abcd',
-      maxZoom: 20,
+    // Initialer Kachel-Layer: OpenStreetMap (Standard: 100% kostenlos, bunt, ohne API-Key)
+    const initialProv = MAP_PROVIDERS[mapProvider] || MAP_PROVIDERS.osm;
+    const tileLayer = L.tileLayer(initialProv.url, {
+      attribution: initialProv.attribution,
+      maxZoom: initialProv.maxZoom,
     }).addTo(map);
+    tileLayerRef.current = tileLayer;
 
     const layerGroup = L.layerGroup().addTo(map);
     layerGroupRef.current = layerGroup;
@@ -87,6 +129,26 @@ export default function StationMapView({
       layerGroupRef.current = null;
     };
   }, []);
+
+  // Dynamischer Kartenstil-Wechsel (OSM Bunt / Esri Clean / Satellit)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (tileLayerRef.current) {
+      try {
+        map.removeLayer(tileLayerRef.current);
+      } catch {}
+    }
+    const prov = MAP_PROVIDERS[mapProvider] || MAP_PROVIDERS.osm;
+    const newLayer = L.tileLayer(prov.url, {
+      attribution: prov.attribution,
+      maxZoom: prov.maxZoom,
+    }).addTo(map);
+    if (newLayer.bringToBack) {
+      newLayer.bringToBack();
+    }
+    tileLayerRef.current = newLayer;
+  }, [mapProvider]);
 
   // Aktualisiere Kartenzentrum & Schichten bei Standort- oder Stationsänderung
   useEffect(() => {
@@ -387,39 +449,117 @@ export default function StationMapView({
 
         </div>
 
-        {/* Zeile 2: Suchradius Slider & Wischbare Schnellstart-Städte (Ausklappbar) */}
+        {/* Zeile 2: Suchradius Slider, Kartenstil & Wischbare Schnellstart-Städte (Ausklappbar) */}
         {isToolbarExpanded && (
           <div
             style={{
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '0.6rem',
+              flexDirection: 'column',
+              gap: '0.45rem',
               borderTop: '1px solid #F1F5F9',
-              paddingTop: '0.4rem',
+              paddingTop: '0.42rem',
             }}
           >
-            {/* Radius-Slider */}
-            {onUpdateRadius && activeLocation && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                <Sliders size={12} color="#64748B" />
-                <span>Radius:</span>
-                <input
-                  type="range"
-                  min="2"
-                  max="25"
-                  step="1"
-                  value={activeLocation.radiusKm || 5}
-                  onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
-                  style={{ width: '65px', accentColor: '#0F172A', cursor: 'pointer' }}
-                />
-                <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
-                  {activeLocation.radiusKm} km
-                </strong>
-              </div>
-            )}
+            {/* Obere Reihe in Zeile 2: Radius-Slider + Kartenstil-Umschalter */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Radius-Slider */}
+              {onUpdateRadius && activeLocation && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
+                  <Sliders size={12} color="#64748B" />
+                  <span>Radius:</span>
+                  <input
+                    type="range"
+                    min="2"
+                    max="25"
+                    step="1"
+                    value={activeLocation.radiusKm || 5}
+                    onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
+                    style={{ width: '65px', accentColor: '#0F172A', cursor: 'pointer' }}
+                  />
+                  <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
+                    {activeLocation.radiusKm} km
+                  </strong>
+                </div>
+              )}
 
-            {/* Swipeable Quick Cities Strip */}
+              {/* Kartenstil Switcher (OSM Bunt / Esri Clean / Satellit) */}
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  background: '#F1F5F9',
+                  borderRadius: '9999px',
+                  padding: '2px',
+                  gap: '2px',
+                }}
+              >
+                <Layers size={11} color="#64748B" style={{ marginLeft: '4px', marginRight: '2px' }} />
+                <button
+                  type="button"
+                  onClick={() => handleSelectMapProvider('osm')}
+                  style={{
+                    border: 'none',
+                    background: mapProvider === 'osm' ? '#0F172A' : 'transparent',
+                    color: mapProvider === 'osm' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.66rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="OpenStreetMap Standard: Bunt, kostenfrei, ohne API-Key"
+                >
+                  Bunt (OSM)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectMapProvider('esriStreet')}
+                  style={{
+                    border: 'none',
+                    background: mapProvider === 'esriStreet' ? '#0F172A' : 'transparent',
+                    color: mapProvider === 'esriStreet' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.66rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Esri World Street Map: Clean, modern, kostenfrei"
+                >
+                  Clean
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectMapProvider('esriSat')}
+                  style={{
+                    border: 'none',
+                    background: mapProvider === 'esriSat' ? '#0F172A' : 'transparent',
+                    color: mapProvider === 'esriSat' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.66rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Esri World Imagery: Echte Satellitenbilder"
+                >
+                  Satellit
+                </button>
+              </div>
+            </div>
+
+            {/* Untere Reihe in Zeile 2: Swipeable Quick Cities Strip */}
             {onSelectQuickCity && (
               <div
                 style={{
@@ -429,8 +569,6 @@ export default function StationMapView({
                   overflowX: 'auto',
                   scrollbarWidth: 'none',
                   WebkitOverflowScrolling: 'touch',
-                  flexShrink: 1,
-                  minWidth: 0,
                 }}
               >
                 {QUICK_CITIES.map((qc) => {
