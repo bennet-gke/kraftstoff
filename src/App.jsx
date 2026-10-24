@@ -349,7 +349,7 @@ export default function App() {
   }, [sortedStations, settings, selectedFuel]);
 
   return (
-    <div className="app-viewport">
+    <div className={`app-viewport ${activeTab === 'map' ? 'map-mode-active' : ''}`}>
       
       {/* Minimalist Glasmorphe Header */}
       <header className="header-glass">
@@ -527,39 +527,41 @@ export default function App() {
           </div>
         )}
 
-        {/* Aufgeräumte zentrale Steuerungsleiste (Fahrzeug, Standort, Radius, Route, Kraftstoff, Sortierung) */}
-        <RouteScheduleBar
-          selectedFuel={selectedFuel}
-          onSelectFuel={handleSelectFuel}
-          isCommuteActive={isCommuteActive}
-          onToggleCommute={() => setIsCommuteActive(!isCommuteActive)}
-          isPaused={isPaused}
-          pausedUntil={settings.pausedUntil}
-          onPause30Min={handlePause30Min}
-          onResumeAlerts={handleResumeAlerts}
-          sortBy={sortBy}
-          onSelectSort={setSortBy}
-          activeVehicle={activeVehicle}
-          onOpenVehicleModal={() => setIsVehicleModalOpen(true)}
-          activeLocation={activeLocation}
-          locations={locations}
-          onSelectLocation={handleSelectLocation}
-          onUpdateRadius={handleUpdateRadius}
-          activeRoute={activeRoute}
-          onOpenLocationRouteModal={() => setIsLocRouteModalOpen(true)}
-          onLocateGps={handleLocateGps}
-          onSelectQuickCity={handleSelectQuickCity}
-          detourMode={detourMode}
-          onSelectDetourMode={setDetourMode}
-          customConsumption={customConsumption}
-          onUpdateCustomConsumption={setCustomConsumption}
-          customLiters={customLiters}
-          onUpdateCustomLiters={setCustomLiters}
-          onResetVehicleOverrides={() => {
-            setCustomConsumption(null);
-            setCustomLiters(null);
-          }}
-        />
+        {/* Aufgeräumte zentrale Steuerungsleiste (Nur in Listen- & Analyseansichten; Auf Vollbild-Karte separat integriert) */}
+        {activeTab !== 'map' && (
+          <RouteScheduleBar
+            selectedFuel={selectedFuel}
+            onSelectFuel={handleSelectFuel}
+            isCommuteActive={isCommuteActive}
+            onToggleCommute={() => setIsCommuteActive(!isCommuteActive)}
+            isPaused={isPaused}
+            pausedUntil={settings.pausedUntil}
+            onPause30Min={handlePause30Min}
+            onResumeAlerts={handleResumeAlerts}
+            sortBy={sortBy}
+            onSelectSort={setSortBy}
+            activeVehicle={activeVehicle}
+            onOpenVehicleModal={() => setIsVehicleModalOpen(true)}
+            activeLocation={activeLocation}
+            locations={locations}
+            onSelectLocation={handleSelectLocation}
+            onUpdateRadius={handleUpdateRadius}
+            activeRoute={activeRoute}
+            onOpenLocationRouteModal={() => setIsLocRouteModalOpen(true)}
+            onLocateGps={handleLocateGps}
+            onSelectQuickCity={handleSelectQuickCity}
+            detourMode={detourMode}
+            onSelectDetourMode={setDetourMode}
+            customConsumption={customConsumption}
+            onUpdateCustomConsumption={setCustomConsumption}
+            customLiters={customLiters}
+            onUpdateCustomLiters={setCustomLiters}
+            onResetVehicleOverrides={() => {
+              setCustomConsumption(null);
+              setCustomLiters(null);
+            }}
+          />
+        )}
 
         {/* TAB 1: RADAR & TANKSTELLEN-LISTE */}
         {activeTab === 'stations' && (
@@ -677,9 +679,9 @@ export default function App() {
           </>
         )}
 
-        {/* TAB 2: INTERAKTIVE KARTENANSICHT */}
+        {/* TAB 2: INTERAKTIVE KARTENANSICHT (Full-Screen Immersive Map mit weißer Rand-Vignette) */}
         {activeTab === 'map' && (
-          <div>
+          <div className="full-screen-map-container">
             <StationMapView
               stations={sortedStations}
               locations={locations}
@@ -691,8 +693,10 @@ export default function App() {
               activeRoute={activeRoute}
               activeVehicle={activeVehicle}
               fuelType={selectedFuel}
+              onSelectFuel={handleSelectFuel}
               selectedStation={selectedStationForDetail}
               onSelectStation={(st) => setSelectedStationForDetail(st)}
+              onCloseSelectedStation={() => setSelectedStationForDetail(null)}
             />
           </div>
         )}

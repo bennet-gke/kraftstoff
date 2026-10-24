@@ -1,7 +1,22 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Navigation, Sparkles, MapPin, Sliders, LocateFixed } from 'lucide-react';
+import {
+  Navigation,
+  Sparkles,
+  MapPin,
+  Sliders,
+  LocateFixed,
+  X,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Fuel,
+  Clock,
+  TrendingDown,
+  TrendingUp,
+  Car,
+} from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { QUICK_CITIES } from '../services/locationService';
 
@@ -16,14 +31,17 @@ export default function StationMapView({
   activeRoute,
   activeVehicle,
   fuelType = 'diesel',
+  onSelectFuel,
   selectedStation,
   onSelectStation,
+  onCloseSelectedStation,
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
+  const [isToolbarExpanded, setIsToolbarExpanded] = useState(true);
 
-  // Initialisiere Leaflet Map mit sauberem Unmount-Cleanup
+  // Initialisiere Leaflet Map mit bunter, lebendiger Vektorkarte (CartoDB Voyager)
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -36,26 +54,32 @@ export default function StationMapView({
       zoomControl: false,
     });
 
-    // Zoom Control unten rechts (kollidiert nicht mit der oberen Steuerungsleiste)
+    // Zoom Control unten rechts (kollidiert nicht mit dem schwebenden Dock)
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Esri World Light Gray Base: Saubere, minimalistische Kacheln
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-      attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
-      maxZoom: 16,
+    // CartoDB Voyager: Wunderschöne, lebendige & bunte Vektorkarte (wie Apple/Google Maps mit grünen Parks, blauen Seen & Straßen)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20,
     }).addTo(map);
 
     const layerGroup = L.layerGroup().addTo(map);
     layerGroupRef.current = layerGroup;
     mapInstanceRef.current = map;
 
-    // Erneute Größenberechnung nach Rendering
-    const timer = setTimeout(() => {
+    // Erneute Größenberechnung nach Rendering & bei Window-Resize
+    const handleResize = () => {
       if (map) map.invalidateSize();
-    }, 150);
+    };
+    window.addEventListener('resize', handleResize);
+    const timer = setTimeout(handleResize, 150);
+    const timer2 = setTimeout(handleResize, 400);
 
     return () => {
+      window.removeEventListener('resize', handleResize);
       clearTimeout(timer);
+      clearTimeout(timer2);
       try {
         map.remove();
       } catch {}
@@ -84,24 +108,24 @@ export default function StationMapView({
       map.invalidateSize();
       map.setView([activeLocation.lat, activeLocation.lng], targetZoom);
 
-      // Standort-Marker
+      // Standort-Marker (Edler dunkler Pin mit weißem Ring)
       const locIcon = L.divIcon({
         className: 'custom-loc-marker',
         html: `
-          <div style="background: #0F172A; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(15,23,42,0.35); border: 2.5px solid white;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          <div style="background: #0F172A; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(15,23,42,0.4); border: 2.5px solid white;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
           </div>
         `,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
       });
 
       L.marker([activeLocation.lat, activeLocation.lng], { icon: locIcon })
         .bindPopup(`
-          <div style="font-family: sans-serif; padding: 2px;">
+          <div style="font-family: var(--font-sans, sans-serif); padding: 4px;">
             <strong style="color: #0F172A; font-size: 13px;">${activeLocation.name}</strong><br>
             <span style="color: #64748B; font-size: 11px;">${activeLocation.address || 'Zentrum'}</span><br>
-            <span style="font-size: 11px; font-weight: 600;">Suchradius: ${activeLocation.radiusKm} km</span>
+            <span style="font-size: 11px; font-weight: 700; color: #0284C7;">Suchradius: ${activeLocation.radiusKm} km</span>
           </div>
         `)
         .addTo(layerGroup);
@@ -113,7 +137,7 @@ export default function StationMapView({
         weight: 1.5,
         dashArray: '5, 6',
         fillColor: '#0F172A',
-        fillOpacity: 0.04,
+        fillOpacity: 0.03,
       }).addTo(layerGroup);
     }
 
@@ -144,53 +168,43 @@ export default function StationMapView({
     const sortedByDist = [...stations].sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
     const baseStation = sortedByDist[0];
 
-    // 4. Zeichne Tankstellen als benutzerdefinierte Preis-Chips
+    // 4. Zeichne Tankstellen als benutzerdefinierte bunte Preis-Chips
     stations.forEach((st) => {
       const isCheap = st.evaluation?.isCheap;
       const isSelected = selectedStation?.id === st.id;
       const priceStr = st.currentPrice ? st.currentPrice.toFixed(3) : '1.699';
 
-      // Rentabilitäts-Rechnung
-      const detour = calculateDetourProfitability({
-        targetPrice: st.currentPrice,
-        targetDistanceKm: st.distanceKm,
-        basePrice: baseStation ? baseStation.currentPrice : st.currentPrice,
-        baseDistanceKm: baseStation ? baseStation.distanceKm : 0,
-        fillLiters: activeVehicle ? (activeVehicle.tankCapacityL * (1 - activeVehicle.currentFuelLevelPct / 100)) : 40,
-        consumptionL100km: activeVehicle?.consumptionL100km || 6.0,
-      });
-
-      const chipColor = isCheap ? '#059669' : '#0F172A';
-      const chipBg = isCheap ? '#ECFDF5' : '#FFFFFF';
-      const chipBorder = isSelected ? '#0F172A' : isCheap ? '#A7F3D0' : '#E2E8F0';
+      const chipBg = isSelected ? '#0F172A' : isCheap ? '#059669' : '#FFFFFF';
+      const chipColor = isSelected || isCheap ? '#FFFFFF' : '#0F172A';
+      const chipBorder = isSelected ? '#38BDF8' : '#FFFFFF';
 
       const customIcon = L.divIcon({
-        className: 'station-price-chip',
+        className: 'station-price-chip-wrap',
         html: `
           <div style="
             background: ${chipBg};
             color: ${chipColor};
             border: 2px solid ${chipBorder};
             padding: 3px 8px;
-            border-radius: 20px;
-            font-family: var(--font-sans, sans-serif);
+            border-radius: 9999px;
+            font-family: var(--font-sans, -apple-system, sans-serif);
             font-weight: 700;
             font-size: 11px;
-            box-shadow: 0 2px 8px rgba(15,23,42,0.14);
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.22);
             display: flex;
             align-items: center;
             gap: 4px;
             white-space: nowrap;
             cursor: pointer;
-            transition: transform 0.15s ease;
-            transform: translate(-50%, -50%) ${isSelected ? 'scale(1.1)' : ''};
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            transform: translate(-50%, -50%) ${isSelected ? 'scale(1.18)' : 'scale(1)'};
           ">
-            <span>${st.brand || 'Frei'}</span>
-            <span style="font-family: monospace; font-size: 12px; font-weight: 800;">${priceStr} €</span>
+            <span style="font-size: 9.5px; opacity: 0.9; text-transform: uppercase;">${st.brand || 'Frei'}</span>
+            <span style="font-family: var(--font-mono, monospace); font-size: 12px; font-weight: 800;">${priceStr} €</span>
           </div>
         `,
-        iconSize: [85, 26],
-        iconAnchor: [42, 13],
+        iconSize: [88, 28],
+        iconAnchor: [44, 14],
       });
 
       const marker = L.marker([st.lat, st.lng], { icon: customIcon }).addTo(layerGroup);
@@ -198,57 +212,50 @@ export default function StationMapView({
       marker.on('click', () => {
         if (onSelectStation) onSelectStation(st);
       });
-
-      // HTML Popup mit Rentabilitäts-Rechnung ("Lohnt sich der Weg?")
-      const popupContent = `
-        <div style="font-family: sans-serif; font-size: 12px; min-width: 210px; padding: 2px;">
-          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
-            <strong style="font-size: 13px; color: #0F172A;">${st.name}</strong>
-            <span style="font-size: 14px; font-weight: 800; color: ${isCheap ? '#059669' : '#0F172A'}; font-family: monospace;">${priceStr} €</span>
-          </div>
-          <div style="color: #64748B; margin-bottom: 6px;">${st.street} • <strong>${st.distanceKm} km</strong></div>
-
-          <div style="background: ${detour.isProfitable ? '#ECFDF5' : '#FFF1F2'}; border: 1px solid ${detour.isProfitable ? '#A7F3D0' : '#FECDD3'}; border-radius: 6px; padding: 6px; margin-bottom: 6px;">
-            <div style="font-weight: 700; color: ${detour.isProfitable ? '#065F46' : '#9F1239'}; margin-bottom: 2px;">
-              ${detour.isProfitable ? '✓ Fahrt lohnt sich!' : '✗ Fahrt lohnt sich nicht!'}
-            </div>
-            <div style="font-size: 11px; color: #475569;">
-              Netto-Ergebnis: <strong>${detour.netSavingsEuro > 0 ? '+' : ''}${detour.netSavingsEuro.toFixed(2)} €</strong><br>
-              (Spritkosten für ${detour.totalDetourKm} km Mehrweg: ${detour.fuelCostDetourEuro.toFixed(2)} €)
-            </div>
-          </div>
-        </div>
-      `;
-
-      marker.bindPopup(popupContent);
     });
 
   }, [stations, activeLocation, activeRoute, activeVehicle, selectedStation, onSelectStation]);
 
+  // Maps Navigation starten (Apple Maps auf iOS oder Google Maps)
+  const openNavigation = (st) => {
+    if (!st) return;
+    const query = st.lat && st.lng
+      ? `${st.lat},${st.lng}`
+      : encodeURIComponent(`${st.name}, ${st.street}, ${st.city}`);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const mapsUrl = isIOS
+      ? `maps://maps.apple.com/?daddr=${query}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${query}`;
+    window.open(mapsUrl, '_blank');
+  };
+
+  // Basistankstelle für das gewählte Element
+  const sortedByDist = [...stations].sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+  const baseStation = sortedByDist[0];
+
+  const selectedDetour = selectedStation ? calculateDetourProfitability({
+    targetPrice: selectedStation.currentPrice,
+    targetDistanceKm: selectedStation.distanceKm,
+    basePrice: baseStation ? baseStation.currentPrice : selectedStation.currentPrice,
+    baseDistanceKm: baseStation ? baseStation.distanceKm : 0,
+    fillLiters: activeVehicle ? (activeVehicle.tankCapacityL * (1 - (activeVehicle.currentFuelLevelPct || 20) / 100)) : 40,
+    consumptionL100km: activeVehicle?.consumptionL100km || 6.2,
+  }) : null;
+
   return (
-    <div className="clean-card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
+    <div className="full-screen-map-wrapper">
       
-      {/* Interaktive Map Toolbar (Mobil-optimierte 2-zeilige Steuerungsleiste) */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          left: '10px',
-          right: '10px',
-          zIndex: 1000,
-          background: 'rgba(255, 255, 255, 0.95)',
-          backdropFilter: 'blur(12px)',
-          borderRadius: '12px',
-          padding: '0.55rem 0.75rem',
-          border: '1px solid #E2E8F0',
-          boxShadow: '0 4px 16px rgba(15, 23, 42, 0.08)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.45rem',
-        }}
-      >
-        {/* Zeile 1: Standort-Auswahl, GPS-Button & Stationen-Badge */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+      {/* 1. Leaflet Map Canvas (100vw x 100vh Full Screen) */}
+      <div ref={mapContainerRef} className="full-screen-leaflet-map" />
+
+      {/* 2. Ethereal Soft White Vignette Overlay (Sanfter weißer Randverlauf an allen Bildschirmrändern) */}
+      <div className="map-vignette-overlay" aria-hidden="true" />
+
+      {/* 3. Schwebende, transparente Steuerungsleiste (Unter dem Header zentriert) */}
+      <div className="map-floating-toolbar">
+        
+        {/* Zeile 1: Standort-Auswahl, GPS-Button, Sprit-Auswahl & Stationen-Badge */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.45rem' }}>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0, flex: 1 }}>
             <MapPin size={14} color="#0F172A" style={{ flexShrink: 0 }} />
@@ -257,9 +264,9 @@ export default function StationMapView({
               onChange={(e) => onSelectLocation && onSelectLocation(e.target.value)}
               style={{
                 width: '100%',
-                maxWidth: '200px',
+                maxWidth: '180px',
                 padding: '0.28rem 0.5rem',
-                borderRadius: '6px',
+                borderRadius: '8px',
                 border: '1px solid #CBD5E1',
                 fontWeight: 700,
                 fontSize: '0.78rem',
@@ -277,7 +284,8 @@ export default function StationMapView({
             </select>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
+            {/* GPS Button */}
             {onLocateGps && (
               <button
                 type="button"
@@ -292,7 +300,7 @@ export default function StationMapView({
                   background: '#F0F9FF',
                   borderColor: '#BAE6FD',
                   color: '#0369A1',
-                  whiteSpace: 'nowrap',
+                  borderRadius: '9999px',
                 }}
                 title="Aktuellen GPS-Standort orten"
               >
@@ -301,93 +309,268 @@ export default function StationMapView({
               </button>
             )}
 
-            <span
-              className="badge badge-favorable"
-              style={{ fontSize: '0.68rem', padding: '0.2rem 0.45rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+            {/* Quick Fuel Selector auf der Karte */}
+            {onSelectFuel && (
+              <div style={{ display: 'inline-flex', background: '#F1F5F9', borderRadius: '9999px', padding: '2px', gap: '2px' }}>
+                <button
+                  type="button"
+                  onClick={() => onSelectFuel('diesel')}
+                  style={{
+                    border: 'none',
+                    background: fuelType === 'diesel' ? '#0F172A' : 'transparent',
+                    color: fuelType === 'diesel' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Diesel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectFuel('e10')}
+                  style={{
+                    border: 'none',
+                    background: fuelType === 'e10' ? '#0F172A' : 'transparent',
+                    color: fuelType === 'e10' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  E10
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectFuel('e5')}
+                  style={{
+                    border: 'none',
+                    background: fuelType === 'e5' ? '#0F172A' : 'transparent',
+                    color: fuelType === 'e5' ? '#FFFFFF' : '#475569',
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    borderRadius: '9999px',
+                    padding: '0.15rem 0.45rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  E5
+                </button>
+              </div>
+            )}
+
+            {/* Minimieren/Maximieren Button */}
+            <button
+              type="button"
+              onClick={() => setIsToolbarExpanded(!isToolbarExpanded)}
+              style={{
+                border: 'none',
+                background: '#F1F5F9',
+                color: '#64748B',
+                width: '26px',
+                height: '26px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+              }}
+              title={isToolbarExpanded ? 'Toolbar einklappen' : 'Toolbar ausklappen'}
             >
-              {stations.length} Stationen
-            </span>
+              {isToolbarExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
           </div>
 
         </div>
 
-        {/* Zeile 2: Suchradius Slider & Wischbare Schnellstart-Städte */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.6rem',
-            borderTop: '1px solid #F1F5F9',
-            paddingTop: '0.35rem',
-          }}
-        >
-          {/* Radius-Slider */}
-          {onUpdateRadius && activeLocation && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              <Sliders size={12} color="#64748B" />
-              <span>Radius:</span>
-              <input
-                type="range"
-                min="2"
-                max="25"
-                step="1"
-                value={activeLocation.radiusKm || 5}
-                onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
-                style={{ width: '65px', accentColor: '#0F172A', cursor: 'pointer' }}
-              />
-              <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
-                {activeLocation.radiusKm} km
-              </strong>
-            </div>
-          )}
+        {/* Zeile 2: Suchradius Slider & Wischbare Schnellstart-Städte (Ausklappbar) */}
+        {isToolbarExpanded && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.6rem',
+              borderTop: '1px solid #F1F5F9',
+              paddingTop: '0.4rem',
+            }}
+          >
+            {/* Radius-Slider */}
+            {onUpdateRadius && activeLocation && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                <Sliders size={12} color="#64748B" />
+                <span>Radius:</span>
+                <input
+                  type="range"
+                  min="2"
+                  max="25"
+                  step="1"
+                  value={activeLocation.radiusKm || 5}
+                  onChange={(e) => onUpdateRadius(activeLocation.id, parseFloat(e.target.value))}
+                  style={{ width: '65px', accentColor: '#0F172A', cursor: 'pointer' }}
+                />
+                <strong className="num-mono" style={{ color: '#0F172A', minWidth: '32px' }}>
+                  {activeLocation.radiusKm} km
+                </strong>
+              </div>
+            )}
 
-          {/* Swipeable Quick Cities Strip */}
-          {onSelectQuickCity && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem',
-                overflowX: 'auto',
-                scrollbarWidth: 'none',
-                WebkitOverflowScrolling: 'touch',
-                flexShrink: 1,
-                minWidth: 0,
-              }}
-            >
-              {QUICK_CITIES.map((qc) => {
-                const isSelected = activeLocation?.name?.toLowerCase().includes(qc.name.toLowerCase());
-                return (
-                  <button
-                    key={qc.id}
-                    type="button"
-                    onClick={() => onSelectQuickCity(qc)}
-                    style={{
-                      background: isSelected ? '#0F172A' : '#F1F5F9',
-                      color: isSelected ? '#FFFFFF' : '#334155',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '0.18rem 0.45rem',
-                      fontSize: '0.68rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {qc.name}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+            {/* Swipeable Quick Cities Strip */}
+            {onSelectQuickCity && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  overflowX: 'auto',
+                  scrollbarWidth: 'none',
+                  WebkitOverflowScrolling: 'touch',
+                  flexShrink: 1,
+                  minWidth: 0,
+                }}
+              >
+                {QUICK_CITIES.map((qc) => {
+                  const isSelected = activeLocation?.name?.toLowerCase().includes(qc.name.toLowerCase());
+                  return (
+                    <button
+                      key={qc.id}
+                      type="button"
+                      onClick={() => onSelectQuickCity(qc)}
+                      style={{
+                        background: isSelected ? '#0F172A' : '#F1F5F9',
+                        color: isSelected ? '#FFFFFF' : '#334155',
+                        border: 'none',
+                        borderRadius: '9999px',
+                        padding: '0.18rem 0.5rem',
+                        fontSize: '0.68rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {qc.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
       </div>
 
-      {/* Map Canvas */}
-      <div ref={mapContainerRef} style={{ width: '100%', height: '540px' }} />
+      {/* 4. Schwebende Station-Detail-Karte (Erscheint beim Klick auf eine Tankstelle über dem schwebenden Dock) */}
+      {selectedStation && (
+        <div className="map-floating-station-card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  padding: '0.12rem 0.45rem',
+                  borderRadius: '6px',
+                  background: '#F1F5F9',
+                  color: '#334155',
+                  letterSpacing: '0.04em',
+                  flexShrink: 0,
+                }}
+              >
+                {selectedStation.brand || 'Frei'}
+              </span>
+              <h4
+                style={{
+                  fontSize: '0.92rem',
+                  fontWeight: 800,
+                  color: '#0F172A',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {selectedStation.name}
+              </h4>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+              <div style={{ textAlign: 'right' }}>
+                <span className="num-mono" style={{ fontSize: '1.35rem', fontWeight: 800, color: selectedStation.evaluation?.isCheap ? '#059669' : '#0F172A', lineHeight: 1 }}>
+                  {selectedStation.currentPrice ? selectedStation.currentPrice.toFixed(3) : '1.699'}
+                </span>
+                <span style={{ fontSize: '0.7rem', color: '#64748B', marginLeft: '0.15rem' }}>€</span>
+              </div>
+
+              {onCloseSelectedStation && (
+                <button
+                  type="button"
+                  onClick={onCloseSelectedStation}
+                  style={{
+                    border: 'none',
+                    background: '#F1F5F9',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: '#64748B',
+                    marginLeft: '0.2rem',
+                  }}
+                  title="Schließen"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.74rem', color: '#64748B' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <MapPin size={11} color="#94A3B8" />
+              <span>{selectedStation.distanceKm} km</span>
+              <span>•</span>
+              <span>{selectedStation.street}</span>
+            </div>
+
+            {selectedDetour && selectedDetour.isProfitable && (
+              <span className="badge badge-favorable" style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem' }}>
+                +{selectedDetour.netSavingsEuro.toFixed(2)} € Netto
+              </span>
+            )}
+          </div>
+
+          {/* Quick Actions */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginTop: '0.1rem' }}>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => openNavigation(selectedStation)}
+              style={{ borderRadius: '9999px', fontSize: '0.76rem', padding: '0.45rem' }}
+            >
+              <Navigation size={13} />
+              <span>Route starten</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                if (onSelectStation) onSelectStation(selectedStation);
+              }}
+              style={{ borderRadius: '9999px', fontSize: '0.76rem', padding: '0.45rem' }}
+            >
+              <Sparkles size={13} color="#059669" />
+              <span>KI-Details</span>
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

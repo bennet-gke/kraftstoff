@@ -771,3 +771,160 @@ body {
   border-color: #0F172A transparent transparent transparent;
 }
 
+/* =========================================================================
+   Full-Screen Immersive Map Experience with Ethereal White Vignette
+   ========================================================================= */
+
+.map-mode-active {
+  max-width: 100vw !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden;
+}
+
+.map-mode-active .header-glass {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin: 0 !important;
+  background-color: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.05);
+}
+
+.map-mode-active .main-content-mobile {
+  padding: 0 !important;
+  margin: 0 !important;
+  flex: 1;
+}
+
+.full-screen-map-container {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10;
+  overflow: hidden;
+  background: #E2E8F0;
+}
+
+.full-screen-map-wrapper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.full-screen-leaflet-map {
+  position: absolute;
+  inset: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 1;
+}
+
+/* Ethereal Soft White Vignette around all screen edges */
+.map-vignette-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+  background: 
+    /* Top Vignette (fades under header & top toolbar) */
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.6) 55px, rgba(255, 255, 255, 0) 140px),
+    /* Bottom Vignette (fades under floating dock & card) */
+    linear-gradient(to top, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.65) 75px, rgba(255, 255, 255, 0) 175px),
+    /* Left Edge Vignette */
+    linear-gradient(to right, rgba(255, 255, 255, 0.75) 0%, rgba(255, 255, 255, 0) 65px),
+    /* Right Edge Vignette */
+    linear-gradient(to left, rgba(255, 255, 255, 0.75) 0%, rgba(255, 255, 255, 0) 65px);
+  box-shadow: 
+    inset 0 0 75px 20px rgba(255, 255, 255, 0.8),
+    inset 0 0 145px 50px rgba(255, 255, 255, 0.45);
+}
+
+/* Floating Toolbar over Map */
+.map-floating-toolbar {
+  position: absolute;
+  top: calc(4.75rem + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 1.5rem);
+  max-width: 620px;
+  z-index: 35;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-radius: 16px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  outline: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.12), 0 4px 10px rgba(15, 23, 42, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: floatDownMap 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes floatDownMap {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Floating Selected Station Card over Map */
+.map-floating-station-card {
+  position: absolute;
+  bottom: calc(5.2rem + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 1.5rem);
+  max-width: 480px;
+  z-index: 36;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border-radius: 18px;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  outline: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 16px 36px -4px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  animation: floatUpCard 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes floatUpCard {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* Custom Marker Styling */
+.station-price-chip-wrap {
+  background: transparent !important;
+  border: none !important;
+}
+
+.custom-loc-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
