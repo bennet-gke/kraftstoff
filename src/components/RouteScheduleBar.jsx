@@ -39,6 +39,7 @@ export default function RouteScheduleBar({
   activeRoute = null,
   routes = [],
   onSelectRoute,
+  onUpdateRouteCorridorRadius,
   filterMode = 'location',
   onSelectFilterMode,
   favoriteStationIds = [],
@@ -110,7 +111,9 @@ export default function RouteScheduleBar({
     switch (sortBy) {
       case 'savings': return 'Netto-Ersparnis';
       case 'price': return 'Günstigster Preis';
-      case 'distance': return 'Kürzeste Distanz';
+      case 'distance': return filterMode === 'route' ? 'In Fahrtrichtung' : 'Kürzeste Distanz';
+      case 'route_progress': return 'In Fahrtrichtung';
+      case 'detour': return 'Kürzester Abstecher';
       default: return 'KI-Score';
     }
   };
@@ -648,6 +651,43 @@ export default function RouteScheduleBar({
                     )}
                   </div>
 
+                  {/* Korridor-Breite Schnellauswahl für die gewählte Route */}
+                  {activeRoute && onUpdateRouteCorridorRadius && (
+                    <div style={{ background: '#F0F9FF', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1px solid #BAE6FD' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem', marginBottom: '0.4rem' }}>
+                        <span style={{ color: '#0369A1', fontWeight: 600 }}>Suchkorridor um Fahrstrecke:</span>
+                        <strong className="num-mono" style={{ color: '#0284C7', fontWeight: 800 }}>
+                          ±{activeRoute.corridorRadiusKm || 2.5} km
+                        </strong>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.35rem' }}>
+                        {[1.0, 2.0, 3.5, 5.0].map((rad) => {
+                          const isActive = Math.abs((activeRoute.corridorRadiusKm || 2.5) - rad) < 0.2;
+                          return (
+                            <button
+                              key={rad}
+                              type="button"
+                              onClick={() => onUpdateRouteCorridorRadius(activeRoute.id, rad)}
+                              style={{
+                                flex: 1,
+                                padding: '0.32rem 0',
+                                borderRadius: '6px',
+                                border: isActive ? '1.5px solid #0284C7' : '1px solid #BAE6FD',
+                                background: isActive ? '#0284C7' : '#FFFFFF',
+                                color: isActive ? '#FFFFFF' : '#0369A1',
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              ±{rad} km
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {activeRoute && (
                     <button
                       type="button"
@@ -955,13 +995,22 @@ export default function RouteScheduleBar({
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem' }}>
-                {[
-                  { id: 'score', label: 'KI-Score', desc: 'Empfehlung aus Preis, Zyklus & Umweg' },
-                  { id: 'savings', label: 'Netto-Ersparnis', desc: 'Reale Euro-Ersparnis abzüglich Sprit' },
-                  { id: 'price', label: 'Niedrigster Preis', desc: 'Reiner Zapfsäulenpreis pro Liter' },
-                  { id: 'distance', label: 'Kürzeste Distanz', desc: 'Nächste Tankstellen zuerst' },
-                ].map((s) => {
-                  const isSelected = sortBy === s.id;
+                {(filterMode === 'route'
+                  ? [
+                      { id: 'route_progress', label: 'In Fahrtrichtung', desc: 'Chronologisch nach km auf der Route' },
+                      { id: 'detour', label: 'Kürzester Abstecher', desc: 'Am dichtesten an der Fahrbahn' },
+                      { id: 'savings', label: 'Netto-Ersparnis', desc: 'Reale Euro-Ersparnis nach Spritkosten' },
+                      { id: 'price', label: 'Niedrigster Preis', desc: 'Günstigster Zapfsäulenpreis' },
+                      { id: 'score', label: 'KI-Score', desc: 'Empfehlung aus Preis & Umweg' },
+                    ]
+                  : [
+                      { id: 'score', label: 'KI-Score', desc: 'Empfehlung aus Preis, Zyklus & Umweg' },
+                      { id: 'savings', label: 'Netto-Ersparnis', desc: 'Reale Euro-Ersparnis abzüglich Sprit' },
+                      { id: 'price', label: 'Niedrigster Preis', desc: 'Reiner Zapfsäulenpreis pro Liter' },
+                      { id: 'distance', label: 'Kürzeste Distanz', desc: 'Nächste Tankstellen zuerst' },
+                    ]
+                ).map((s) => {
+                  const isSelected = sortBy === s.id || (filterMode === 'route' && sortBy === 'distance' && s.id === 'route_progress');
                   return (
                     <button
                       key={s.id}

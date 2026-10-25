@@ -9,6 +9,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { offsetCoordinates } from './locationService';
+import { sampleRouteQueryPoints } from './routeService';
 
 // Lokale Speicher-Schlüssel
 const STORAGE_KEYS = {
@@ -596,6 +597,98 @@ class DataService {
     }
 
     // Wenn keine echten Stationen gefunden wurden: Rückgabe eines leeren Arrays. Keinerlei Fake-Stationen!
+    if (stationList.length === 0) {
+      return [];
+    }
+
+    const favoriteIds = this.getFavoriteStationIds();
+
+    return stationList.map((station) => {
+      const history = this.getStationHistory(station, fuelType);
+      const latestPoint = history[history.length - 1];
+      const baseCurrentPrice = station.livePrice || (latestPoint ? latestPoint.price : 1.699);
+
+      return {
+        ...station,
+        currentPrice: baseCurrentPrice,
+        nominalPrice: baseCurrentPrice,
+        fuelType,
+        history,
+        isFavorite: favoriteIds.includes(station.id),
+      };
+    });
+  }
+
+  /**
+   * Lädt alle realen Tankstellen entlang einer kompletten Fahrt-Route über die offizielle Tankerkönig API.
+   * Taktet Abfrage-Kreise entlang des Streckenverlaufs ab, führt alle Stationen zusammen und dedupliziert sie.
+   */
+  async getStationsForRoute(fuelType = this.userSettings.fuelPreference, route = null) {
+    if (!this.hasValidTankerkoenigKey() || !route) {
+      return [];
+    }
+
+    const creds = this.getCredentials();
+    const tkKey = (creds.tankerkoenigKey || creds.tankerkoenigApiKey || '').trim();
+
+    // 1. Hole optimierte Abtast-Zentren entlang der Route
+    const queryCenters = sampleRouteQueryPoints(route);
+    if (!queryCenters || queryCenters.length === 0) return [];
+
+    const stationMap = new Map();
+
+    // 2. Rufe alle Zentren parallel ab
+    const fetchPromises = queryCenters.map(async (center) => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6500);
+        const url = `/api/tankerkoenig?lat=${center.lat}&lng=${center.lng}&rad=${center.radiusKm || 14}&sort=dist&type=all&apikey=${encodeURIComponent(tkKey)}`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.ok && Array.isArray(data.stations)) {
+            data.stations.forEach((s, idx) => {
+              if (!s || !s.id) return;
+              if (stationMap.has(s.id)) return; // Bereits erfasst
+
+              const rawPrice = s[fuelType];
+              const hasExactLivePrice = typeof rawPrice === 'number' && rawPrice > 0.5 && Math.abs(rawPrice - 1.009) > 0.005;
+              const currentLivePrice = hasExactLivePrice ? rawPrice : calculateRealisticPriceForRealStation(s, fuelType);
+
+              if (hasExactLivePrice) {
+                this.recordRealPriceReading(s.id, fuelType, currentLivePrice, s.isOpen !== false);
+              }
+
+              stationMap.set(s.id, {
+                id: s.id || `tk-route-st-${idx}`,
+                tankerkoenig_id: s.id,
+                name: s.name,
+                brand: s.brand || (s.name ? s.name.split(' ')[0] : 'Freie Station'),
+                street: `${s.street || ''} ${s.houseNumber || ''}`.trim() || 'Straße unbekannt',
+                city: s.place || 'Deutschland',
+                postCode: s.postCode ? String(s.postCode) : '',
+                lat: s.lat,
+                lng: s.lng,
+                distanceKm: typeof s.dist === 'number' ? parseFloat(s.dist.toFixed(1)) : 2.5,
+                isOnCommuteRoute: true,
+                isOpen: s.isOpen !== false,
+                basePriceOffset: 0,
+                livePrice: currentLivePrice,
+                isExactLivePrice: hasExactLivePrice,
+              });
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Route segment fetch notice:', err);
+      }
+    });
+
+    await Promise.allSettled(fetchPromises);
+
+    const stationList = Array.from(stationMap.values());
     if (stationList.length === 0) {
       return [];
     }

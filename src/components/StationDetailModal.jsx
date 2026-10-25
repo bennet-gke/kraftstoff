@@ -122,22 +122,42 @@ export default function StationDetailModal({
 
             {/* Status-Badges (ohne umbrechende Bullet-Dots) */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  color: '#334155',
-                  background: '#F1F5F9',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '6px',
-                }}
-              >
-                <Navigation size={11} color="#64748B" />
-                <span className="num-mono">{station.distanceKm} km entfernt</span>
-              </span>
+              {station.isOnRouteCorridor && station.kmAlongRoute !== undefined ? (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.25rem',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    color: '#1D4ED8',
+                    background: '#EFF6FF',
+                    border: '1px solid #BFDBFE',
+                    padding: '0.15rem 0.45rem',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <Navigation size={11} color="#1D4ED8" />
+                  <span>km {station.kmAlongRoute} auf Route ({station.routeDetourKm < 0.1 ? 'an der Strecke' : `+${(station.routeDetourKm * 1000).toFixed(0)}m Abstecher`})</span>
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.25rem',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    color: '#334155',
+                    background: '#F1F5F9',
+                    padding: '0.15rem 0.45rem',
+                    borderRadius: '6px',
+                  }}
+                >
+                  <Navigation size={11} color="#64748B" />
+                  <span className="num-mono">{station.distanceKm} km entfernt</span>
+                </span>
+              )}
 
               <span
                 style={{

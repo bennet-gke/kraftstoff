@@ -97,13 +97,22 @@ export default function App() {
   const handleSelectFilterMode = (mode) => {
     setFilterMode(mode);
     if (mode === 'route') {
-      if (!activeRouteId && routes.length > 0) {
-        handleSelectRoute(routes[0].id);
+      let r = activeRoute;
+      if (!r && routes.length > 0) {
+        r = routes[0];
+        setActiveRouteId(r.id);
+        routeService.setActiveRouteId(r.id);
+      }
+      setDetourMode('route_corridor');
+      if (r) {
+        loadData(selectedFuel, null, r);
       }
     } else if (mode === 'location') {
       setActiveRouteId(null);
       routeService.setActiveRouteId(null);
       setDetourMode('local_roundtrip');
+      const targetLoc = locations.find((l) => l.id === activeLocationId) || locations[0];
+      loadData(selectedFuel, targetLoc, null);
     }
   };
 
@@ -136,13 +145,19 @@ export default function App() {
     loadData(fuel, targetLoc);
   };
 
-  // Lade Tankstellendaten
-  const loadData = async (fuel = selectedFuel, loc = null) => {
+  // Lade Tankstellendaten (automatisch für Standort ODER Fahrt-Route)
+  const loadData = async (fuel = selectedFuel, loc = null, targetRoute = null) => {
     setIsRefreshing(true);
     setHasValidApiKey(dataService.hasValidTankerkoenigKey());
     try {
-      const targetLoc = loc || locations.find((l) => l.id === activeLocationId) || locations[0];
-      const data = await dataService.getStationsWithPrices(fuel, targetLoc);
+      let data = [];
+      const effectiveRoute = targetRoute || (filterMode === 'route' ? activeRoute : null);
+      if (effectiveRoute) {
+        data = await dataService.getStationsForRoute(fuel, effectiveRoute);
+      } else {
+        const targetLoc = loc || locations.find((l) => l.id === activeLocationId) || locations[0];
+        data = await dataService.getStationsWithPrices(fuel, targetLoc);
+      }
       setStations(data);
 
       // Kontinuierliches On-Device Lernen im Hintergrund mit den neuen Tankstellendaten
@@ -260,14 +275,23 @@ export default function App() {
       setDetourMode('route_corridor');
       const targetRoute = routes.find((r) => r.id === id);
       if (targetRoute) {
-        const start = targetRoute.startCoords || targetRoute.waypoints?.[0];
-        if (start?.lat && start?.lng) {
-          loadData(selectedFuel, { lat: start.lat, lng: start.lng, radiusKm: 15 });
-        }
+        loadData(selectedFuel, null, targetRoute);
       }
     } else {
       setFilterMode('location');
       setDetourMode('local_roundtrip');
+      const targetLoc = locations.find((l) => l.id === activeLocationId) || locations[0];
+      loadData(selectedFuel, targetLoc, null);
+    }
+  };
+
+  // Korridor-Breite einer Route dynamisch anpassen
+  const handleUpdateRouteCorridorRadius = (routeId, newRadiusKm) => {
+    const updated = routeService.updateRouteCorridorRadius(routeId, newRadiusKm);
+    setRoutes([...updated]);
+    const r = updated.find((x) => x.id === routeId);
+    if (r) {
+      loadData(selectedFuel, null, r);
     }
   };
 
@@ -351,16 +375,23 @@ export default function App() {
       return stations.filter((s) => favoriteStationIds.includes(s.id));
     }
     if (filterMode === 'route' && activeRoute) {
-      return routeService.filterStationsByRoute(localizedStations, activeRoute);
+      // WICHTIG: Im Routen-Modus greifen wir direkt auf stations zu (für den gesamten Fahrt-Korridor)
+      // und filtern NICHT über localizedStations (was alles außerhalb des Einzel-Ort-Radius verwerfen würde)!
+      return routeService.filterStationsByRoute(stations, activeRoute);
     }
     return localizedStations;
   }, [filterMode, stations, localizedStations, activeRoute, favoriteStationIds]);
 
-  // 3. Basistankstelle finden (die nächste zum Standort)
+  // 3. Basistankstelle finden
   const baseStation = useMemo(() => {
     if (routeFilteredStations.length === 0) return null;
+    if (filterMode === 'route') {
+      // Bei Routen ist die Vergleichs-Basis die erste Tankstelle am Streckenbeginn (km ~0)
+      const sortedByKm = [...routeFilteredStations].sort((a, b) => (a.kmAlongRoute || 0) - (b.kmAlongRoute || 0));
+      return sortedByKm[0];
+    }
     return [...routeFilteredStations].sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0))[0];
-  }, [routeFilteredStations]);
+  }, [routeFilteredStations, filterMode]);
 
   // 4. Bewertung & Rentabilitäts-Berechnung
   const evaluatedStations = useMemo(() => {
@@ -419,14 +450,21 @@ export default function App() {
       list.sort((a, b) => (b.mlPrediction?.score || 0) - (a.mlPrediction?.score || 0));
     } else if (sortBy === 'price') {
       list.sort((a, b) => a.currentPrice - b.currentPrice);
-    } else if (sortBy === 'distance') {
-      list.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+    } else if (sortBy === 'distance' || sortBy === 'route_progress') {
+      if (filterMode === 'route') {
+        // Bei Route: In Fahrtrichtung nach Kilometerstand auf der Route
+        list.sort((a, b) => (a.kmAlongRoute || 0) - (b.kmAlongRoute || 0));
+      } else {
+        list.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+      }
     } else if (sortBy === 'savings') {
       list.sort((a, b) => (b.detour?.netSavingsEuro || 0) - (a.detour?.netSavingsEuro || 0));
+    } else if (sortBy === 'detour') {
+      list.sort((a, b) => (a.routeDetourKm || 0) - (b.routeDetourKm || 0));
     }
 
     return list;
-  }, [evaluatedStations, isCommuteActive, sortBy]);
+  }, [evaluatedStations, isCommuteActive, sortBy, filterMode]);
 
   const bestStation = sortedStations[0];
   const targetTrendStation = sortedStations.find((s) => s.id === trendsStationId) || bestStation || stations[0];
@@ -751,6 +789,7 @@ export default function App() {
             activeRoute={activeRoute}
             routes={routes}
             onSelectRoute={handleSelectRoute}
+            onUpdateRouteCorridorRadius={handleUpdateRouteCorridorRadius}
             filterMode={filterMode}
             onSelectFilterMode={handleSelectFilterMode}
             favoriteStationIds={favoriteStationIds}
@@ -828,6 +867,76 @@ export default function App() {
             </div>
           ) : (
             <>
+              {/* Routen-Fahrplan & Korridor-Banner (Wenn Routen-Filter aktiv) */}
+              {filterMode === 'route' && activeRoute && (
+                <div
+                  style={{
+                    background: '#F0F9FF',
+                    border: '1px solid #BAE6FD',
+                    borderRadius: '14px',
+                    padding: '0.85rem 1rem',
+                    marginBottom: '0.85rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div
+                        style={{
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '8px',
+                          background: '#0284C7',
+                          color: '#FFFFFF',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Navigation size={15} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#0369A1' }}>
+                          Fahrtroute: {activeRoute.name}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#0284C7', marginTop: '1px' }}>
+                          {activeRoute.startName || 'Start'} ➔ {activeRoute.endName || 'Ziel'} • {Number(activeRoute.totalDistanceKm || 0).toFixed(1)} km Fahrstrecke
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#0369A1' }}>Korridor:</span>
+                      {[1.0, 2.0, 3.5, 5.0].map((rad) => {
+                        const isActive = Math.abs((activeRoute.corridorRadiusKm || 2.5) - rad) < 0.2;
+                        return (
+                          <button
+                            key={rad}
+                            type="button"
+                            onClick={() => handleUpdateRouteCorridorRadius(activeRoute.id, rad)}
+                            style={{
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '6px',
+                              border: isActive ? '1.5px solid #0284C7' : '1px solid #BAE6FD',
+                              background: isActive ? '#0284C7' : '#FFFFFF',
+                              color: isActive ? '#FFFFFF' : '#0369A1',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ±{rad} km
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Top-Empfehlung Banner mit kombinierter Literpreis- & Mehrweg-Rechnung */}
               {bestStation && (
 
@@ -840,7 +949,7 @@ export default function App() {
                         <span>Top-Empfehlung ({activeVehicle?.name || 'Fahrzeug'})</span>
                       </span>
                       {bestStation.isOnRouteCorridor && (
-                        <span className="badge badge-blue">Auf aktiver Route</span>
+                        <span className="badge badge-blue">Auf aktiver Route (km {bestStation.kmAlongRoute || 0})</span>
                       )}
                       {baseStation && bestStation.id !== baseStation.id && bestStation.detour?.priceDiffCent > 0 && (
                         <span className="badge badge-favorable" style={{ fontWeight: 700 }}>
@@ -853,7 +962,15 @@ export default function App() {
                       {bestStation.name}
                     </h2>
                     <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem', lineHeight: 1.4 }}>
-                      {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
+                      {bestStation.isOnRouteCorridor ? (
+                        <>
+                          {bestStation.street} • Bei km {bestStation.kmAlongRoute || 0} auf der Route • {bestStation.routeDetourKm < 0.1 ? 'Direkt an der Strecke' : `${(bestStation.routeDetourKm * 1000).toFixed(0)}m Abstecher (+${bestStation.detourMinutes || 2} Min.)`} •{' '}
+                        </>
+                      ) : (
+                        <>
+                          {bestStation.street} • {bestStation.distanceKm} km entfernt •{' '}
+                        </>
+                      )}
                       {bestStation.detour?.isProfitable && baseStation && bestStation.id !== baseStation.id ? (
                         <span style={{ color: '#059669', fontWeight: 700 }}>
                           +{Number(bestStation.detour?.netSavingsEuro || 0).toFixed(2)} € Netto-Ersparnis

@@ -59,6 +59,7 @@ export default function StationMapView({
   activeRoute,
   routes = [],
   onSelectRoute,
+  onUpdateRouteCorridorRadius,
   filterMode = 'location',
   onSelectFilterMode,
   favoriteStationIds = [],
@@ -234,11 +235,12 @@ export default function StationMapView({
         ? activeRoute.polylineCoords
         : activeRoute.waypoints.map((wp) => [wp.lat, wp.lng]);
       
-      // Korridor-Puffer
+      // Korridor-Puffer (Breite entsprechend des eingestellten Korridors)
+      const corridorKm = activeRoute.corridorRadiusKm || 2.5;
       L.polyline(latlngs, {
         color: '#2563EB',
-        weight: (activeRoute.corridorRadiusKm || 2.5) * 14,
-        opacity: 0.12,
+        weight: Math.min(50, Math.max(14, corridorKm * 14)),
+        opacity: 0.14,
         lineCap: 'round',
       }).addTo(layerGroup);
 
@@ -246,9 +248,49 @@ export default function StationMapView({
       L.polyline(latlngs, {
         color: '#2563EB',
         weight: 3.5,
-        opacity: 0.85,
+        opacity: 0.88,
         dashArray: '6, 6',
       }).addTo(layerGroup);
+
+      // Start- und Ziel-Marker
+      const startPt = activeRoute.startCoords || activeRoute.waypoints?.[0];
+      const endPt = activeRoute.endCoords || activeRoute.waypoints?.[activeRoute.waypoints.length - 1];
+
+      if (startPt && (startPt.lat || Array.isArray(startPt))) {
+        const sLat = startPt.lat || startPt[0];
+        const sLng = startPt.lng || startPt[1];
+        const startIcon = L.divIcon({
+          className: 'route-flag-start',
+          html: `
+            <div style="background: #059669; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; box-shadow: 0 4px 10px rgba(5,150,105,0.4); border: 2px solid white;">
+              A
+            </div>
+          `,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+        });
+        L.marker([sLat, sLng], { icon: startIcon })
+          .bindPopup(`<strong style="color: #065F46; font-size: 12px;">🟢 Start: ${activeRoute.startName || 'Start'}</strong>`)
+          .addTo(layerGroup);
+      }
+
+      if (endPt && (endPt.lat || Array.isArray(endPt))) {
+        const eLat = endPt.lat || endPt[0];
+        const eLng = endPt.lng || endPt[1];
+        const endIcon = L.divIcon({
+          className: 'route-flag-end',
+          html: `
+            <div style="background: #DC2626; color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; box-shadow: 0 4px 10px rgba(220,38,38,0.4); border: 2px solid white;">
+              B
+            </div>
+          `,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+        });
+        L.marker([eLat, eLng], { icon: endIcon })
+          .bindPopup(`<strong style="color: #991B1B; font-size: 12px;">🏁 Ziel: ${activeRoute.endName || 'Ziel'}</strong>`)
+          .addTo(layerGroup);
+      }
     }
 
     // 3. Basistankstelle für den Umweg-Rechner
@@ -714,6 +756,36 @@ export default function StationMapView({
                 </div>
               )}
 
+              {/* Korridor-Schnellwahl (im Routen-Modus) */}
+              {mapMode === 'route' && activeRoute && onUpdateRouteCorridorRadius && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.72rem', color: '#0369A1', whiteSpace: 'nowrap' }}>
+                  <Navigation size={12} color="#0284C7" />
+                  <span>Korridor:</span>
+                  {[1.0, 2.0, 3.5, 5.0].map((rad) => {
+                    const isActive = Math.abs((activeRoute.corridorRadiusKm || 2.5) - rad) < 0.2;
+                    return (
+                      <button
+                        key={rad}
+                        type="button"
+                        onClick={() => onUpdateRouteCorridorRadius(activeRoute.id, rad)}
+                        style={{
+                          border: isActive ? '1.5px solid #0284C7' : '1px solid #BAE6FD',
+                          background: isActive ? '#0284C7' : '#FFFFFF',
+                          color: isActive ? '#FFFFFF' : '#0369A1',
+                          padding: '0.12rem 0.35rem',
+                          borderRadius: '4px',
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ±{rad}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Fahrzeug-Direktwechsler auf der Karte */}
               {vehicles && vehicles.length > 0 && onSelectVehicle && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#64748B' }}>
@@ -950,15 +1022,28 @@ export default function StationMapView({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.74rem', color: '#64748B' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <MapPin size={11} color="#94A3B8" />
-              <span>{selectedStation.distanceKm} km</span>
-              <span>•</span>
-              <span>{selectedStation.street}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {selectedStation.isOnRouteCorridor && selectedStation.kmAlongRoute !== undefined ? (
+                <>
+                  <Navigation size={11} color="#2563EB" style={{ flexShrink: 0 }} />
+                  <span style={{ fontWeight: 700, color: '#1D4ED8', flexShrink: 0 }}>km {selectedStation.kmAlongRoute}</span>
+                  <span style={{ color: '#CBD5E1' }}>•</span>
+                  <span style={{ color: '#2563EB', flexShrink: 0 }}>{selectedStation.routeDetourKm < 0.1 ? 'an der Strecke' : `+${(selectedStation.routeDetourKm * 1000).toFixed(0)}m Abstecher`}</span>
+                  <span style={{ color: '#CBD5E1' }}>•</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedStation.street}</span>
+                </>
+              ) : (
+                <>
+                  <MapPin size={11} color="#94A3B8" style={{ flexShrink: 0 }} />
+                  <span>{selectedStation.distanceKm} km</span>
+                  <span style={{ color: '#CBD5E1' }}>•</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedStation.street}</span>
+                </>
+              )}
             </div>
 
             {selectedDetour && selectedDetour.isProfitable && (
-              <span className="badge badge-favorable" style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem' }}>
+              <span className="badge badge-favorable" style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem', flexShrink: 0 }}>
                 +{selectedDetour.netSavingsEuro.toFixed(2)} € Netto
               </span>
             )}

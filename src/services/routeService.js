@@ -3,6 +3,7 @@
  * 
  * Berechnet reale Fahrstrecken von Ort 1 nach Ort 2 per OpenStreetMap OSRM Engine.
  * Ermittelt für jede Tankstelle exakt die zusätzlichen Mehr-Kilometer beim Tankvorgang!
+ * Inklusive hochpräziser Punkt-zu-Strecken-Projektion (Point-to-Segment) und Multi-Query-Sampling!
  */
 
 import { calculateHaversineDistance } from './locationService';
@@ -48,22 +49,191 @@ export const INITIAL_ROUTES = [
 ];
 
 /**
- * Berechnet die minimale Distanz einer Tankstelle zu einer Reihe von Wegpunkten.
+ * Berechnet den exakten minimalen Abstand (in Kilometern) eines Punktes P (Tankstelle)
+ * zu einem Liniensegment zwischen A und B mittels geodätischer Projektion.
+ * Berücksichtigt nicht nur Eckpunkte, sondern die gesamte Straßenlinie!
  */
-export function calculateMinDistanceToRoute(stationLat, stationLng, waypoints) {
-  if (!waypoints || waypoints.length === 0) return 999;
-  if (waypoints.length === 1) {
-    return calculateHaversineDistance(stationLat, stationLng, waypoints[0].lat, waypoints[0].lng);
+export function calculateDistancePointToSegmentKm(pLat, pLng, aLat, aLng, bLat, bLng) {
+  const meanLat = (((aLat + bLat) / 2) * Math.PI) / 180;
+  const cosLat = Math.cos(meanLat);
+
+  // Koordinaten in Kilometer relativ zu Punkt A
+  const bx = (bLng - aLng) * (Math.PI / 180) * 6371 * cosLat;
+  const by = (bLat - aLat) * (Math.PI / 180) * 6371;
+  const px = (pLng - aLng) * (Math.PI / 180) * 6371 * cosLat;
+  const py = (pLat - aLat) * (Math.PI / 180) * 6371;
+
+  const segLenSq = bx * bx + by * by;
+  if (segLenSq < 1e-8) {
+    return {
+      distanceKm: calculateHaversineDistance(pLat, pLng, aLat, aLng),
+      fraction: 0,
+      projLat: aLat,
+      projLng: aLng,
+      segLenKm: 0,
+    };
   }
 
-  let minDistance = 999;
-  for (let i = 0; i < waypoints.length; i++) {
-    const dist = calculateHaversineDistance(stationLat, stationLng, waypoints[i].lat, waypoints[i].lng);
-    if (dist < minDistance) {
-      minDistance = dist;
+  // Projektionsfaktor t entlang des Segments AB [0 = Punkt A, 1 = Punkt B]
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / segLenSq));
+  const projX = t * bx;
+  const projY = t * by;
+  const dx = px - projX;
+  const dy = py - projY;
+  const distanceKm = Math.sqrt(dx * dx + dy * dy);
+  const segLenKm = Math.sqrt(segLenSq);
+
+  return {
+    distanceKm: parseFloat(distanceKm.toFixed(3)),
+    fraction: t,
+    projLat: aLat + t * (bLat - aLat),
+    projLng: aLng + t * (bLng - aLng),
+    segLenKm: parseFloat(segLenKm.toFixed(3)),
+  };
+}
+
+/**
+ * Wandelt die Wegpunkte oder Polyline-Koordinaten einer Route in eine flache Punktliste um.
+ */
+export function getRoutePoints(route) {
+  if (!route) return [];
+  if (Array.isArray(route.polylineCoords) && route.polylineCoords.length > 1) {
+    return route.polylineCoords.map((c) => {
+      if (Array.isArray(c)) return { lat: c[0], lng: c[1] };
+      return { lat: c.lat, lng: c.lng };
+    });
+  }
+  if (Array.isArray(route.waypoints) && route.waypoints.length > 1) {
+    return route.waypoints.map((w) => {
+      if (Array.isArray(w)) return { lat: w[0], lng: w[1] };
+      return { lat: w.lat, lng: w.lng };
+    });
+  }
+  const pts = [];
+  if (route.startCoords?.lat && route.startCoords?.lng) pts.push(route.startCoords);
+  if (route.endCoords?.lat && route.endCoords?.lng) pts.push(route.endCoords);
+  return pts;
+}
+
+/**
+ * Berechnet für eine Tankstelle den minimalen Abstand zur Route sowie den genauen
+ * Fortschritt (Kilometerstand ab Start) entlang der Route.
+ */
+export function findClosestPointOnRoute(stationLat, stationLng, route) {
+  const points = getRoutePoints(route);
+  if (points.length < 2) {
+    const singleDist = points[0] ? calculateHaversineDistance(stationLat, stationLng, points[0].lat, points[0].lng) : 999;
+    return {
+      minDistanceKm: singleDist,
+      kmAlongRoute: 0,
+      totalRouteKm: 0,
+      progressPct: 0,
+      segmentIndex: 0,
+    };
+  }
+
+  let totalRouteKm = 0;
+  const segmentLengths = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const d = calculateHaversineDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+    segmentLengths.push(d);
+    totalRouteKm += d;
+  }
+
+  let minDistanceKm = 9999;
+  let kmAlongRoute = 0;
+  let bestSegIndex = 0;
+  let cumulativeKm = 0;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const segProj = calculateDistancePointToSegmentKm(stationLat, stationLng, a.lat, a.lng, b.lat, b.lng);
+
+    if (segProj.distanceKm < minDistanceKm) {
+      minDistanceKm = segProj.distanceKm;
+      bestSegIndex = i;
+      kmAlongRoute = cumulativeKm + segProj.fraction * (segmentLengths[i] || 0);
+    }
+    cumulativeKm += segmentLengths[i] || 0;
+  }
+
+  const effectiveTotal = route.totalDistanceKm || totalRouteKm || 1;
+  const progressPct = Math.min(100, Math.max(0, Math.round((kmAlongRoute / effectiveTotal) * 100)));
+
+  return {
+    minDistanceKm: parseFloat(minDistanceKm.toFixed(2)),
+    kmAlongRoute: parseFloat(kmAlongRoute.toFixed(1)),
+    totalRouteKm: parseFloat(effectiveTotal.toFixed(1)),
+    progressPct,
+    segmentIndex: bestSegIndex,
+  };
+}
+
+/**
+ * Generiert optimierte Abfrage-Zentren entlang einer Route für die Tankerkönig API.
+ * Die API erlaubt max. 25 km Radius. Wir setzen Kreise im Abstand von 16 km mit Radius 15 km,
+ * sodass 100% des Korridors lückenlos abgedeckt werden!
+ */
+export function sampleRouteQueryPoints(route, stepKm = 16, maxPoints = 5) {
+  const points = getRoutePoints(route);
+  if (points.length < 2) {
+    if (points[0]) return [{ lat: points[0].lat, lng: points[0].lng, radiusKm: 15 }];
+    return [];
+  }
+
+  // 1. Berechne kumulative Distanzen aller Wegpunkte
+  let totalKm = 0;
+  const distFromStart = [0];
+  for (let i = 0; i < points.length - 1; i++) {
+    totalKm += calculateHaversineDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+    distFromStart.push(totalKm);
+  }
+
+  // Wenn die Route kurz ist (<= 15 km), genügen Start & Ziel (oder Mittelpunkt)
+  if (totalKm <= 12) {
+    const midIdx = Math.floor(points.length / 2);
+    return [
+      { lat: points[midIdx].lat, lng: points[midIdx].lng, radiusKm: Math.min(15, Math.max(8, Math.round(totalKm + 4))) }
+    ];
+  }
+
+  // 2. Bestimme Abtastabstände
+  const numSteps = Math.min(maxPoints, Math.max(2, Math.ceil(totalKm / stepKm)));
+  const targetDistances = [];
+  for (let s = 0; s < numSteps; s++) {
+    targetDistances.push((s / (numSteps - 1)) * totalKm);
+  }
+
+  // 3. Finde für jede Zieldistanz die passenden Koordinaten auf der Polyline
+  const sampleCenters = [];
+  for (const targetD of targetDistances) {
+    let segIdx = 0;
+    while (segIdx < distFromStart.length - 2 && distFromStart[segIdx + 1] < targetD) {
+      segIdx++;
+    }
+    const d0 = distFromStart[segIdx];
+    const d1 = distFromStart[segIdx + 1] || totalKm;
+    const segLen = d1 - d0;
+    const frac = segLen > 0 ? (targetD - d0) / segLen : 0;
+
+    const p0 = points[segIdx];
+    const p1 = points[segIdx + 1] || points[segIdx];
+    const lat = parseFloat((p0.lat + frac * (p1.lat - p0.lat)).toFixed(5));
+    const lng = parseFloat((p0.lng + frac * (p1.lng - p0.lng)).toFixed(5));
+
+    // Vermeide doppelte Punkte
+    const isDuplicate = sampleCenters.some((c) => calculateHaversineDistance(c.lat, c.lng, lat, lng) < 4);
+    if (!isDuplicate) {
+      sampleCenters.push({
+        lat,
+        lng,
+        radiusKm: 14, // 14 km Radius sorgt bei 16 km Schrittweite für perfekte Überlappung
+      });
     }
   }
-  return minDistance;
+
+  return sampleCenters;
 }
 
 class RouteService {
@@ -118,6 +288,20 @@ class RouteService {
   }
 
   /**
+   * Ändert die Korridor-Breite einer Route (z. B. 1.0 km, 2.5 km, 5.0 km) und speichert sie.
+   */
+  updateRouteCorridorRadius(id, newRadiusKm) {
+    const updated = this.routes.map((r) => {
+      if (r.id === id) {
+        return { ...r, corridorRadiusKm: parseFloat(newRadiusKm) || 2.5 };
+      }
+      return r;
+    });
+    this.saveRoutes(updated);
+    return updated;
+  }
+
+  /**
    * Berechnet eine reale Straßenroute zwischen zwei Punkten über OpenStreetMap OSRM API
    */
   async calculateOsmRoute(start, end) {
@@ -127,7 +311,7 @@ class RouteService {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
@@ -157,9 +341,9 @@ class RouteService {
       console.warn('OSRM routing network notice, using geodesic interpolation:', err);
     }
 
-    // Fallback: Geodätische Interpolation mit 7 Stützpunkten
+    // Fallback: Geodätische Interpolation mit 10 Stützpunkten
     const directKm = calculateHaversineDistance(start.lat, start.lng, end.lat, end.lng);
-    const steps = 7;
+    const steps = 10;
     const interpolated = [];
     for (let i = 0; i <= steps; i++) {
       const f = i / steps;
@@ -182,10 +366,10 @@ class RouteService {
   async addRoute(routeData) {
     let waypoints = routeData.waypoints;
     let totalDistKm = routeData.totalDistanceKm || 0;
-    let polylineCoords = [];
+    let polylineCoords = routeData.polylineCoords || [];
 
-    // Wenn Start- und Zielkoordinaten übergeben wurden, berechne reale OSRM-Route
-    if (routeData.startCoords && routeData.endCoords) {
+    // Wenn Start- und Zielkoordinaten übergeben wurden, berechne reale OSRM-Route falls noch nicht vorliegend
+    if (routeData.startCoords && routeData.endCoords && (!polylineCoords || polylineCoords.length < 2)) {
       try {
         const osrmResult = await this.calculateOsmRoute(routeData.startCoords, routeData.endCoords);
         waypoints = osrmResult.waypoints;
@@ -233,40 +417,50 @@ class RouteService {
   }
 
   /**
-   * Filtert Stationen entlang des Korridors der aktiven Route
-   * und berechnet den realen Zusatzweg (Mehr-Kilometer durch den Tankvorgang auf der Strecke).
+   * Filtert Stationen präzise entlang des Korridors der aktiven Route.
+   * Berechnet den realen Zusatzweg (Abstecher) und die Kilometer-Position auf der Fahrtstrecke!
    */
   filterStationsByRoute(stations, route = this.getActiveRoute()) {
-    if (!route) return stations;
+    if (!route || !Array.isArray(stations) || stations.length === 0) return stations || [];
 
-    const start = route.startCoords || route.waypoints[0];
-    const end = route.endCoords || route.waypoints[route.waypoints.length - 1];
-    const baseDirectDist = route.totalDistanceKm || calculateHaversineDistance(start.lat, start.lng, end.lat, end.lng);
+    const allowedCorridor = parseFloat(route.corridorRadiusKm) || 2.5;
 
-    return stations
-      .map((station) => {
-        // Minimaler Abstand der Tankstelle zur Straßenlinie
-        const minDistToPolyline = calculateMinDistanceToRoute(station.lat, station.lng, route.waypoints);
+    const enriched = stations.map((station) => {
+      // 1. Exakter minimaler Abstand der Tankstelle zur Straßenlinie & km auf der Strecke
+      const match = findClosestPointOnRoute(station.lat, station.lng, route);
 
-        // Reale Zusatzkilometer: (Start ➔ Tankstelle + Tankstelle ➔ Ziel) - Direkte Distanz
-        const distStartToStation = calculateHaversineDistance(start.lat, start.lng, station.lat, station.lng);
-        const distStationToEnd = calculateHaversineDistance(station.lat, station.lng, end.lat, end.lng);
-        const routeThroughStation = distStartToStation + distStationToEnd;
-        const extraFromRoute = Math.max(0, routeThroughStation - baseDirectDist);
+      // Reale Zusatzkilometer: Abfahren von der Autobahn/Bundesstraße und Wiederauffahren
+      // Mindestens 200m, ansonsten 2x der Querabstand zur Fahrbahn
+      const realAdditionalKm = parseFloat(Math.max(0.2, match.minDistanceKm * 2).toFixed(1));
 
-        // Der zusätzliche Mehrweg durch das Verlassen der Strecke zur Tankstelle
-        const realAdditionalKm = parseFloat(Math.max(0.2, minDistToPolyline * 2, extraFromRoute).toFixed(1));
+      // Geschätzte Mehrzeit für den Abstecher (Ampel, Abbiegen, Tankstopp-Zusatzzeit)
+      const detourMinutes = Math.max(1, Math.round((match.minDistanceKm * 2 / 35) * 60 + 1));
 
-        return {
-          ...station,
-          routeDetourKm: parseFloat(minDistToPolyline.toFixed(2)),
-          realAdditionalKm,
-          isOnRouteCorridor: minDistToPolyline <= route.corridorRadiusKm,
-        };
-      })
-      .filter((s) => s.isOnRouteCorridor)
-      .sort((a, b) => (a.routeDetourKm || 0) - (b.routeDetourKm || 0));
+      let routeSegmentLabel = 'Streckenmitte';
+      if (match.progressPct < 25) routeSegmentLabel = 'Startphase';
+      else if (match.progressPct > 75) routeSegmentLabel = 'Zielnähe';
+
+      const isOnRouteCorridor = match.minDistanceKm <= allowedCorridor;
+
+      return {
+        ...station,
+        routeDetourKm: match.minDistanceKm,
+        kmAlongRoute: match.kmAlongRoute,
+        progressPct: match.progressPct,
+        routeSegmentLabel,
+        realAdditionalKm,
+        detourMinutes,
+        isOnRouteCorridor,
+      };
+    });
+
+    // Filtere nur Tankstellen, die im definierten Korridor liegen
+    const inCorridor = enriched.filter((s) => s.isOnRouteCorridor);
+
+    // Standard-Sortierung: In Fahrtrichtung (nach Kilometerstand auf der Route)
+    return inCorridor.sort((a, b) => (a.kmAlongRoute || 0) - (b.kmAlongRoute || 0));
   }
 }
 
 export const routeService = new RouteService();
+

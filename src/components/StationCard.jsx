@@ -171,18 +171,19 @@ export default function StationCard({
                 style={{
                   fontSize: '0.62rem',
                   fontWeight: 700,
-                  color: '#2563EB',
+                  color: '#1D4ED8',
                   background: '#EFF6FF',
-                  padding: '0.1rem 0.35rem',
+                  padding: '0.12rem 0.45rem',
                   borderRadius: '4px',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '0.2rem',
+                  gap: '0.25rem',
                   flexShrink: 0,
+                  border: '1px solid #BFDBFE',
                 }}
               >
                 <Navigation size={9} />
-                <span>Route</span>
+                <span>km {station.kmAlongRoute || '–'} ({station.routeSegmentLabel || 'Route'})</span>
               </span>
             )}
           </div>
@@ -235,14 +236,29 @@ export default function StationCard({
               textOverflow: 'ellipsis',
             }}
           >
-            <MapPin size={11} color="#94A3B8" style={{ flexShrink: 0 }} />
-            <span className="num-mono" style={{ fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {station.distanceKm} km
-            </span>
-            <span style={{ color: '#CBD5E1', flexShrink: 0 }}>•</span>
-            <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
-              ~{arrival.driveTimeMin} Min.
-            </span>
+            {station.isOnRouteCorridor && station.kmAlongRoute !== undefined ? (
+              <>
+                <Navigation size={11} color="#2563EB" style={{ flexShrink: 0 }} />
+                <span className="num-mono" style={{ fontWeight: 700, color: '#1D4ED8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  km {station.kmAlongRoute}
+                </span>
+                <span style={{ color: '#CBD5E1', flexShrink: 0 }}>•</span>
+                <span style={{ whiteSpace: 'nowrap', flexShrink: 0, color: '#2563EB' }}>
+                  {station.routeDetourKm < 0.1 ? 'an der Strecke' : `+${(station.routeDetourKm * 1000).toFixed(0)}m Abstecher`}
+                </span>
+              </>
+            ) : (
+              <>
+                <MapPin size={11} color="#94A3B8" style={{ flexShrink: 0 }} />
+                <span className="num-mono" style={{ fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {station.distanceKm} km
+                </span>
+                <span style={{ color: '#CBD5E1', flexShrink: 0 }}>•</span>
+                <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  ~{arrival.driveTimeMin} Min.
+                </span>
+              </>
+            )}
 
             {deltaCent !== 0 && (
               <>
