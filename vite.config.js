@@ -135,14 +135,34 @@ function tankerkoenigPlugin() {
         }
 
         const parsedUrl = new URL(urlStr, `http://${req.headers.host || 'localhost'}`);
+        const id = parsedUrl.searchParams.get('id');
         const lat = parsedUrl.searchParams.get('lat');
         const lng = parsedUrl.searchParams.get('lng');
         const rad = parsedUrl.searchParams.get('rad') || '5';
         const type = parsedUrl.searchParams.get('type') || 'all';
-        const apikey = (parsedUrl.searchParams.get('apikey') || process.env.VITE_TANKERKOENIG_KEY || '00000000-0000-0000-0000-000000000002').trim();
+        const apikey = (parsedUrl.searchParams.get('apikey') || process.env.VITE_TANKERKOENIG_KEY || '').trim();
 
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', 'application/json');
+
+        if (!apikey || apikey === '00000000-0000-0000-0000-000000000002') {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, needsApiKey: true, message: 'Tankerkönig API-Key erforderlich. Bitte trage deinen persönlichen API-Key in den Einstellungen ein.' }));
+          return;
+        }
+
+        if (id) {
+          try {
+            const detailUrl = `https://creativecommons.tankerkoenig.de/json/detail.php?id=${id}&apikey=${apikey}`;
+            const response = await fetch(detailUrl);
+            const data = await response.json();
+            res.end(JSON.stringify(data));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ ok: false, error: e.message }));
+          }
+          return;
+        }
 
         if (!lat || !lng) {
           res.statusCode = 400;
@@ -151,7 +171,8 @@ function tankerkoenigPlugin() {
         }
 
         try {
-          const targetUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lng}&rad=${rad}&sort=dist&type=${type}&apikey=${apikey}`;
+          const radius = Math.min(Math.max(parseFloat(rad) || 5, 1), 25);
+          const targetUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lng}&rad=${radius}&sort=dist&type=${type}&apikey=${apikey}`;
           const response = await fetch(targetUrl);
           const data = await response.json();
           res.end(JSON.stringify(data));

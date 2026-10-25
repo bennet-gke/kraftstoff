@@ -13,7 +13,10 @@ import {
   ChevronRight,
   Cloud,
   Star,
+  AlertTriangle,
+  Key,
 } from 'lucide-react';
+
 
 import { dataService } from './services/dataService';
 import { vehicleService } from './services/vehicleService';
@@ -46,6 +49,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('stations');
 
   // Daten & Einstellungen
+  const [hasValidApiKey, setHasValidApiKey] = useState(() => dataService.hasValidTankerkoenigKey());
   const [stations, setStations] = useState([]);
   const [settings, setSettings] = useState(dataService.userSettings);
   const [laws, setLaws] = useState(dataService.lawsTaxes);
@@ -53,6 +57,7 @@ export default function App() {
   const [isCommuteActive, setIsCommuteActive] = useState(false);
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'price' | 'distance' | 'savings'
   const [isRefreshing, setIsRefreshing] = useState(false);
+
 
   // Fahrzeug-Zustand
   const [vehicles, setVehicles] = useState(vehicleService.vehicles);
@@ -132,6 +137,7 @@ export default function App() {
   // Lade Tankstellendaten
   const loadData = async (fuel = selectedFuel, loc = null) => {
     setIsRefreshing(true);
+    setHasValidApiKey(dataService.hasValidTankerkoenigKey());
     try {
       const targetLoc = loc || locations.find((l) => l.id === activeLocationId) || locations[0];
       const data = await dataService.getStationsWithPrices(fuel, targetLoc);
@@ -440,12 +446,40 @@ export default function App() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                 <span className="brand-title">KRAFTSTOFF</span>
-                <span className="live-status-pill">
-                  <span className="live-dot" />
-                  <span>LIVE</span>
-                </span>
+                {hasValidApiKey ? (
+                  <span className="live-status-pill">
+                    <span className="live-dot" />
+                    <span>LIVE</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSettingsModalOpen(true);
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.25rem',
+                      background: '#FEF2F2',
+                      border: '1px solid #FECACA',
+                      color: '#DC2626',
+                      borderRadius: '9999px',
+                      padding: '0.12rem 0.5rem',
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                    title="Tankerkönig API-Key erforderlich (Klicke zum Eintragen)"
+                  >
+                    <AlertTriangle size={11} color="#DC2626" />
+                    <span>API-Key fehlt</span>
+                  </button>
+                )}
               </div>
               <div className="brand-subtitle">Intelligenter Tankradar</div>
+
             </div>
           </div>
 
@@ -573,11 +607,88 @@ export default function App() {
       {/* Hauptinhalt */}
       <main className="main-content-mobile" style={{ flex: 1, paddingBottom: '2.5rem' }}>
 
+        {/* Prominenter Banner bei fehlendem Tankerkönig API-Key */}
+        {!hasValidApiKey && (
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)',
+              border: '1.5px solid #FCD34D',
+              borderRadius: '14px',
+              padding: '0.95rem 1.2rem',
+              marginBottom: '1rem',
+              boxShadow: '0 4px 14px rgba(245, 158, 11, 0.10)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: '260px' }}>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: '#F59E0B',
+                  color: '#FFFFFF',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <Key size={18} strokeWidth={2.4} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#92400E', margin: '0 0 0.15rem' }}>
+                  Tankerkönig API-Key erforderlich
+                </h3>
+                <p style={{ fontSize: '0.78rem', color: '#78350F', lineHeight: 1.4, margin: 0 }}>
+                  Ohne hinterlegten API-Key werden <strong>keine Tankstellen und keine Preise</strong> geladen. Trage jetzt deinen persönlichen Key ein, um verifizierte MTS-K Realdaten zu erhalten.
+                </p>
+              </div>
+            </div>
 
-
-
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <a
+                href="https://creativecommons.tankerkoenig.de/"
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  fontSize: '0.76rem',
+                  color: '#92400E',
+                  fontWeight: 600,
+                  textDecoration: 'underline',
+                }}
+              >
+                Kostenlos Key holen
+              </a>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setIsSettingsModalOpen(true)}
+                style={{
+                  background: '#0F172A',
+                  color: '#FFFFFF',
+                  borderRadius: '9999px',
+                  padding: '0.4rem 0.85rem',
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+              >
+                <Settings size={13} />
+                <span>API-Key in Einstellungen eintragen</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Feedback Banner nach Synchronisation */}
+
         {syncFeedback && (
           <div
             style={{
@@ -650,9 +761,64 @@ export default function App() {
 
         {/* TAB 1: RADAR & TANKSTELLEN-LISTE */}
         {activeTab === 'stations' && (
-          <>
-            {/* Top-Empfehlung Banner mit kombinierter Literpreis- & Mehrweg-Rechnung */}
-            {bestStation && (
+          !hasValidApiKey ? (
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '16px',
+                border: '1.5px dashed #F59E0B',
+                padding: '3rem 1.5rem',
+                textAlign: 'center',
+                margin: '1rem 0 2rem',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.03)',
+              }}
+            >
+              <div
+                style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '50%',
+                  background: '#FEF3C7',
+                  color: '#D97706',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 1rem',
+                }}
+              >
+                <Key size={28} strokeWidth={2.4} />
+              </div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.45rem' }}>
+                Tankerkönig API-Key erforderlich
+              </h3>
+              <p style={{ fontSize: '0.86rem', color: '#64748B', maxWidth: '460px', margin: '0 auto 1.4rem', lineHeight: 1.5 }}>
+                Du möchtest 100% echte Tankstellen, Live-Preise und historische Marktdaten sehen? KRAFTSTOFF zeigt ausschließlich echte Tankstellen über deinen persönlichen Tankerkönig API-Key an.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setIsSettingsModalOpen(true)}
+                  style={{ borderRadius: '9999px', padding: '0.65rem 1.4rem', fontSize: '0.86rem', fontWeight: 700 }}
+                >
+                  ⚙️ API-Key in Einstellungen eingeben
+                </button>
+                <a
+                  href="https://creativecommons.tankerkoenig.de/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                  style={{ borderRadius: '9999px', padding: '0.65rem 1.15rem', fontSize: '0.86rem' }}
+                >
+                  Kostenlos registrieren (1 Min.)
+                </a>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Top-Empfehlung Banner mit kombinierter Literpreis- & Mehrweg-Rechnung */}
+              {bestStation && (
+
               <div className="top-recommendation-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.85rem' }}>
                   <div style={{ flex: 1, minWidth: '240px' }}>
@@ -823,7 +989,7 @@ export default function App() {
               ))}
             </div>
           </>
-        )}
+        ) )}
 
         {/* TAB 2: INTERAKTIVE KARTENANSICHT (Full-Screen Immersive Map mit weißer Rand-Vignette) */}
         {activeTab === 'map' && (
@@ -851,48 +1017,109 @@ export default function App() {
               selectedStation={selectedStationForDetail}
               onSelectStation={(st) => setSelectedStationForDetail(st)}
               onCloseSelectedStation={() => setSelectedStationForDetail(null)}
+              hasValidApiKey={hasValidApiKey}
+              onOpenSettings={() => setIsSettingsModalOpen(true)}
             />
           </div>
         )}
 
         {/* TAB 3: TYPISCHE WOCHE & D3 ANALYSEN */}
         {activeTab === 'analytics' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {/* 1. Die "Typische Woche" - Dynamischer Wochenzyklus mit Hoch- und Tiefzeiten */}
-            <TypicalWeekChart
-              baseFuelPrice={bestStation ? bestStation.currentPrice : 1.72}
-              fuelType={selectedFuel}
-              taxReliefCent={activeTaxReliefCent}
-            />
-
-            {/* 2. D3 Heatmap 7 Tage x 24 Stunden Matrix */}
-            <HeatmapChart
-              history={bestStation?.history || []}
-              fuelType={selectedFuel}
-              stationName={bestStation?.name}
-            />
-
-            {/* 3. D3 Preisverlauf mit AMA und Volatilitätsband */}
-            {bestStation && (
-              <PriceTrendChart
-                history={bestStation.history}
-                stationName={bestStation.name}
+          !hasValidApiKey ? (
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '16px',
+                border: '1.5px dashed #CBD5E1',
+                padding: '3rem 1.5rem',
+                textAlign: 'center',
+                margin: '1.5rem 0',
+              }}
+            >
+              <BarChart3 size={36} color="#94A3B8" style={{ margin: '0 auto 0.75rem' }} />
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.4rem' }}>
+                Wochenanalysen basieren auf echten Daten
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem', lineHeight: 1.5 }}>
+                Die typische Woche und Preisverlaufs-Heatmaps benötigen echte Messungen aus deinem Tankerkönig API-Key.
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setIsSettingsModalOpen(true)}
+                style={{ borderRadius: '9999px' }}
+              >
+                ⚙️ API-Key in Einstellungen eintragen
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* 1. Die "Typische Woche" - Dynamischer Wochenzyklus mit Hoch- und Tiefzeiten */}
+              <TypicalWeekChart
+                baseFuelPrice={bestStation ? bestStation.currentPrice : 1.72}
                 fuelType={selectedFuel}
-                evaluation={bestStation.evaluation}
+                taxReliefCent={activeTaxReliefCent}
               />
-            )}
-          </div>
+
+              {/* 2. D3 Heatmap 7 Tage x 24 Stunden Matrix */}
+              <HeatmapChart
+                history={bestStation?.history || []}
+                fuelType={selectedFuel}
+                stationName={bestStation?.name}
+              />
+
+              {/* 3. D3 Preisverlauf mit AMA und Volatilitätsband */}
+              {bestStation && (
+                <PriceTrendChart
+                  history={bestStation.history}
+                  stationName={bestStation.name}
+                  fuelType={selectedFuel}
+                  evaluation={bestStation.evaluation}
+                />
+              )}
+            </div>
+          )
         )}
 
         {/* TAB 4: TENSORFLOW.JS MACHINE LEARNING */}
         {activeTab === 'ml' && (
-          <MachineLearningPanel
-            stations={evaluatedStations}
-            activeVehicle={activeVehicle}
-            activeLawsCount={laws.filter((l) => l.isActive).length}
-            isTwelveClockActive={isTwelveClockActive}
-          />
+          !hasValidApiKey ? (
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '16px',
+                border: '1.5px dashed #CBD5E1',
+                padding: '3rem 1.5rem',
+                textAlign: 'center',
+                margin: '1.5rem 0',
+              }}
+            >
+              <Sparkles size={36} color="#94A3B8" style={{ margin: '0 auto 0.75rem' }} />
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.4rem' }}>
+                KI-Modell benötigt echte MTS-K Daten
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem', lineHeight: 1.5 }}>
+                Das TensorFlow.js Modell trainiert auf verifizierten Zapfsäulenpreisen aus deinem Tankerkönig API-Key.
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setIsSettingsModalOpen(true)}
+                style={{ borderRadius: '9999px' }}
+              >
+                ⚙️ API-Key in Einstellungen eintragen
+              </button>
+            </div>
+          ) : (
+            <MachineLearningPanel
+              stations={evaluatedStations}
+              activeVehicle={activeVehicle}
+              activeLawsCount={laws.filter((l) => l.isActive).length}
+              isTwelveClockActive={isTwelveClockActive}
+            />
+          )
         )}
+
 
       </main>
 

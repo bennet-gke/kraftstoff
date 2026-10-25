@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap, Star } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap, Star, ShieldCheck } from 'lucide-react';
 import PriceTrendChart from './PriceTrendChart';
+import { dataService } from '../services/dataService';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
 
@@ -16,6 +17,23 @@ export default function StationDetailModal({
   onToggleFavorite,
   onClose,
 }) {
+  // Echte Station-Details von Tankerkönig (detail.php)
+  const [stationDetails, setStationDetails] = useState(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+
+  useEffect(() => {
+    const sId = station?.tankerkoenig_id || station?.id;
+    if (sId && dataService.hasValidTankerkoenigKey()) {
+      setIsLoadingDetails(true);
+      dataService.getStationDetails(sId)
+        .then((res) => {
+          if (res) setStationDetails(res);
+        })
+        .catch(() => {})
+        .finally(() => setIsLoadingDetails(false));
+    }
+  }, [station]);
+
   // Interaktive Rechner-Parameter im Modal
   const defaultLiters = activeVehicle
     ? Math.round(activeVehicle.tankCapacityL * (1 - (activeVehicle.currentFuelLevelPct || 20) / 100))
@@ -70,6 +88,7 @@ export default function StationDetailModal({
 
   const score = mlPrediction?.score || evaluation?.score || 50;
 
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-content" style={{ maxWidth: '840px', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
@@ -95,12 +114,71 @@ export default function StationDetailModal({
                 {station.name}
               </h3>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#64748B', fontSize: '0.78rem', marginTop: '0.25rem' }}>
-              <MapPin size={13} color="#94A3B8" />
-              <span>{station.street}, {station.postCode || ''} {station.city}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#64748B', fontSize: '0.78rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <MapPin size={13} color="#94A3B8" />
+                <span>{station.street}, {station.postCode || ''} {station.city}</span>
+              </div>
               <span>•</span>
               <span className="num-mono" style={{ fontWeight: 600 }}>{station.distanceKm} km entfernt</span>
+              <span>•</span>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.2rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                color: station.isOpen !== false ? '#059669' : '#DC2626',
+                background: station.isOpen !== false ? '#ECFDF5' : '#FEF2F2',
+                padding: '0.1rem 0.4rem',
+                borderRadius: '4px',
+              }}>
+                {station.isOpen !== false ? '● Jetzt Geöffnet' : '● Derzeit Geschlossen'}
+              </span>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.2rem',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                color: '#0284C7',
+                background: '#F0F9FF',
+                padding: '0.1rem 0.4rem',
+                borderRadius: '4px',
+              }}>
+                <ShieldCheck size={11} />
+                <span>MTS-K Echtzeitdaten</span>
+              </span>
             </div>
+
+            {/* Reale Öffnungszeiten von Tankerkönig detail.php */}
+            {stationDetails && (
+              <div style={{
+                marginTop: '0.45rem',
+                padding: '0.35rem 0.6rem',
+                background: '#F8FAFC',
+                borderRadius: '6px',
+                fontSize: '0.73rem',
+                color: '#334155',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                flexWrap: 'wrap',
+                border: '1px solid #E2E8F0',
+              }}>
+                <Clock size={13} color="#64748B" />
+                {stationDetails.wholeDay ? (
+                  <strong style={{ color: '#059669' }}>Durchgehend 24 Stunden geöffnet</strong>
+                ) : stationDetails.openingTimes && stationDetails.openingTimes.length > 0 ? (
+                  <span>
+                    Öffnungszeiten: {stationDetails.openingTimes.map((t) => `${t.text ? t.text + ' ' : ''}${t.start ? t.start.slice(0, 5) : ''}-${t.end ? t.end.slice(0, 5) : ''}`).join(', ')}
+                  </span>
+                ) : (
+                  <span>Reguläre Öffnungszeiten gemäß MTS-K Meldestelle</span>
+                )}
+              </div>
+            )}
+
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>

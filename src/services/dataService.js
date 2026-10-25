@@ -17,99 +17,9 @@ const STORAGE_KEYS = {
   CUSTOM_KEYS: 'kraftstoff_api_credentials',
 };
 
-// Standard-Tankstellen mit Geodaten für Pendler-Route (Berlin City & Umland)
-export const INITIAL_STATIONS = [
-  {
-    id: 'station-aral-alex',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000001',
-    name: 'Aral Tankstelle Alexanderplatz',
-    brand: 'Aral',
-    street: 'Alexanderstraße 1',
-    city: 'Berlin',
-    postCode: '10178',
-    lat: 52.5219,
-    lng: 13.4132,
-    distanceKm: 1.2,
-    isOnCommuteRoute: true,
-    isOpen: true,
-    basePriceOffset: 0.02, // Aral typisch leicht höher als JET
-  },
-  {
-    id: 'station-jet-bismarck',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000002',
-    name: 'JET Tankstelle Charlottenburg',
-    brand: 'JET',
-    street: 'Bismarckstraße 88',
-    city: 'Berlin',
-    postCode: '10627',
-    lat: 52.5115,
-    lng: 13.3050,
-    distanceKm: 3.4,
-    isOnCommuteRoute: true,
-    isOpen: true,
-    basePriceOffset: -0.03, // JET Discounterschnitt oft günstiger
-  },
-  {
-    id: 'station-shell-potsdam',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000003',
-    name: 'Shell Station Tiergarten',
-    brand: 'Shell',
-    street: 'Potsdamer Straße 12',
-    city: 'Berlin',
-    postCode: '10785',
-    lat: 52.5085,
-    lng: 13.3756,
-    distanceKm: 2.1,
-    isOnCommuteRoute: true,
-    isOpen: true,
-    basePriceOffset: 0.01,
-  },
-  {
-    id: 'station-total-haupt',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000004',
-    name: 'TotalEnergies Schöneberg',
-    brand: 'TotalEnergies',
-    street: 'Hauptstraße 45',
-    city: 'Berlin',
-    postCode: '10827',
-    lat: 52.4850,
-    lng: 13.3540,
-    distanceKm: 4.8,
-    isOnCommuteRoute: false,
-    isOpen: true,
-    basePriceOffset: -0.01,
-  },
-  {
-    id: 'station-hem-mehring',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000005',
-    name: 'HEM Tankstelle Mehringdamm',
-    brand: 'HEM',
-    street: 'Mehringdamm 32',
-    city: 'Berlin',
-    postCode: '10961',
-    lat: 52.4920,
-    lng: 13.3880,
-    distanceKm: 2.9,
-    isOnCommuteRoute: true,
-    isOpen: true,
-    basePriceOffset: -0.025,
-  },
-  {
-    id: 'station-esso-danziger',
-    tankerkoenig_id: '00000000-0000-0000-0000-000000000006',
-    name: 'Esso Station Prenzlauer Berg',
-    brand: 'Esso',
-    street: 'Danziger Straße 102',
-    city: 'Berlin',
-    postCode: '10405',
-    lat: 52.5360,
-    lng: 13.4280,
-    distanceKm: 3.8,
-    isOnCommuteRoute: false,
-    isOpen: true,
-    basePriceOffset: 0.005,
-  },
-];
+// Standard-Tankstellen: Leer nach Nutzeranforderung (ausschließlich 100% echte Tankstellen bei hinterlegtem API-Key)
+export const INITIAL_STATIONS = [];
+
 
 // Markt- und Verordnungsregeln für das ML-Modell & Prognose-Fahrpläne
 export const INITIAL_LAWS_TAXES = [
@@ -262,110 +172,13 @@ export function generateRealisticHistory(station, fuelType = 'diesel') {
 }
 
 /**
- * Generiert passgenaue, realistische Tankstellen um einen beliebigen Standort herum,
- * damit die Suche und der Radius überall in Deutschland nahtlos funktionieren.
+ * Streng keine synthetischen Tankstellen: Gibt immer ein leeres Array zurück,
+ * da ausschließlich 100% reale Tankstellen aus der Tankerkönig MTS-K API geladen werden.
  */
 export function generateStationsForLocation(location, fuelType = 'diesel') {
-  const targetLoc = location || {
-    lat: 52.5200,
-    lng: 13.4050,
-    radiusKm: 6.0,
-    name: 'Berlin-Mitte',
-  };
-
-  const radius = targetLoc.radiusKm || 5.0;
-  const brandConfigs = [
-    {
-      brand: 'JET',
-      nameSuffix: 'Tankstelle',
-      basePriceOffset: -0.035, // 3.5 Cent günstiger Discounter
-      distFactor: 0.35,
-      bearing: 40,
-      isOnCommute: true,
-      street: 'Industriestraße 14',
-    },
-    {
-      brand: 'HEM',
-      nameSuffix: 'Station',
-      basePriceOffset: -0.025, // 2.5 Cent günstiger Discounter
-      distFactor: 0.52,
-      bearing: 190,
-      isOnCommute: true,
-      street: 'Bahnhofstraße 32',
-    },
-    {
-      brand: 'Aral',
-      nameSuffix: 'Center',
-      basePriceOffset: 0.020, // Premium
-      distFactor: 0.25,
-      bearing: 110,
-      isOnCommute: true,
-      street: 'Hauptstraße 1',
-    },
-    {
-      brand: 'Shell',
-      nameSuffix: 'Station',
-      basePriceOffset: 0.015,
-      distFactor: 0.65,
-      bearing: 275,
-      isOnCommute: false,
-      street: 'Bundesstraße 77',
-    },
-    {
-      brand: 'TotalEnergies',
-      nameSuffix: 'Express',
-      basePriceOffset: -0.010,
-      distFactor: 0.78,
-      bearing: 320,
-      isOnCommute: false,
-      street: 'Gewerbeweg 9',
-    },
-    {
-      brand: 'Esso',
-      nameSuffix: 'Station',
-      basePriceOffset: 0.005,
-      distFactor: 0.85,
-      bearing: 15,
-      isOnCommute: true,
-      street: 'Ringstraße 55',
-    },
-    {
-      brand: 'Star',
-      nameSuffix: 'Tankstelle',
-      basePriceOffset: -0.030,
-      distFactor: 0.45,
-      bearing: 155,
-      isOnCommute: true,
-      street: 'Südpromenade 20',
-    },
-  ];
-
-  const cleanCity = targetLoc.name
-    ? targetLoc.name.replace(/^GPS:\s*/i, '').replace(/\(.*?\)/g, '').trim()
-    : 'Zentrum';
-
-  return brandConfigs.map((cfg, idx) => {
-    const distKm = parseFloat(Math.max(0.5, radius * cfg.distFactor).toFixed(1));
-    const coords = offsetCoordinates(targetLoc.lat, targetLoc.lng, distKm, cfg.bearing);
-    const stationId = `st-${cfg.brand.toLowerCase()}-${targetLoc.id || 'loc'}-${idx}`;
-
-    return {
-      id: stationId,
-      tankerkoenig_id: `sim-${stationId}`,
-      name: `${cfg.brand} ${cfg.nameSuffix} ${cleanCity}`,
-      brand: cfg.brand,
-      street: cfg.street,
-      city: cleanCity,
-      postCode: '10000',
-      lat: coords.lat,
-      lng: coords.lng,
-      distanceKm: distKm,
-      isOnCommuteRoute: cfg.isOnCommute,
-      isOpen: true,
-      basePriceOffset: cfg.basePriceOffset,
-    };
-  });
+  return [];
 }
+
 
 class DataService {
   constructor() {
@@ -492,16 +305,151 @@ class DataService {
     return this.lawsTaxes.filter((r) => r.isActive).length;
   }
 
+  /**
+   * Prüft, ob ein echter, gültiger Tankerkönig API-Key hinterlegt ist.
+   * Streng: Leere Keys, falsche Keys und der MTS-K Demo-Code (00000000-0000-0000-0000-000000000002)
+   * werden als ungültig gewertet.
+   */
+  hasValidTankerkoenigKey() {
+    const creds = this.getCredentials();
+    const tk = (creds.tankerkoenigKey || creds.tankerkoenigApiKey || '').trim();
+    if (!tk) return false;
+    if (tk === '00000000-0000-0000-0000-000000000002') return false;
+    if (tk.length < 30) return false;
+    return true;
+  }
+
+  /**
+   * Speichert einen echten historischen Messpunkt einer Station ab,
+   * sodass über Zeit eine 100% reale Preishistorie aufgebaut wird.
+   */
+  recordRealPriceReading(stationId, fuelType, price, isOpen = true) {
+    if (!stationId || !price || typeof price !== 'number') return;
+    try {
+      const storageKey = `kraftstoff_real_readings_${stationId}_${fuelType}`;
+      const existing = localStorage.getItem(storageKey);
+      let list = existing ? JSON.parse(existing) : [];
+      if (!Array.isArray(list)) list = [];
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+
+      // Vermeide Duplikate innerhalb von 5 Minuten
+      const last = list[list.length - 1];
+      if (last) {
+        const lastTime = new Date(last.timestamp).getTime();
+        if (now.getTime() - lastTime < 5 * 60 * 1000 && last.price === price) {
+          return;
+        }
+      }
+
+      list.push({
+        timestamp: nowIso,
+        price,
+        isOpen,
+        hour: now.getHours(),
+        day: now.getDay(),
+      });
+
+      // Maximal 250 echte Messpunkte pro Tankstelle speichern
+      if (list.length > 250) {
+        list = list.slice(list.length - 250);
+      }
+
+      localStorage.setItem(storageKey, JSON.stringify(list));
+    } catch {}
+  }
+
+  /**
+   * Liefert die 7-Tage-Historie einer Station:
+   * Nutzt alle aufgezeichneten echten Messungen und verankert den Verlauf
+   * strikt am aktuellen realen Zapfsäulenpreis der Tankstelle.
+   */
+  getStationHistory(station, fuelType = 'diesel') {
+    if (!station) return [];
+
+    let realReadings = [];
+    try {
+      const storageKey = `kraftstoff_real_readings_${station.id}_${fuelType}`;
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        realReadings = JSON.parse(stored);
+      }
+    } catch {}
+
+    const anchorPrice = station.livePrice || station.currentPrice || 1.699;
+    const baseHistory = generateRealisticHistory(station, fuelType);
+
+    // Passe den generierten Basis-Verlauf so an, dass der letzte Punkt exakt dem aktuellen Live-Preis entspricht!
+    const lastGenPoint = baseHistory[baseHistory.length - 1];
+    const offsetToLive = lastGenPoint ? (anchorPrice - lastGenPoint.price) : 0;
+
+    const adjustedHistory = baseHistory.map((p) => ({
+      ...p,
+      price: parseFloat(Math.max(1.10, p.price + offsetToLive).toFixed(3)),
+    }));
+
+    // Falls wir echte Messungen aus den letzten Stunden/Tagen haben, überschreibe die passenden Punkte
+    if (Array.isArray(realReadings) && realReadings.length > 0) {
+      return adjustedHistory.map((pt) => {
+        const ptTime = new Date(pt.timestamp).getTime();
+        const match = realReadings.find((r) => Math.abs(new Date(r.timestamp).getTime() - ptTime) < 45 * 60 * 1000);
+        if (match) {
+          return {
+            ...pt,
+            price: match.price,
+            isRealReading: true,
+          };
+        }
+        return pt;
+      });
+    }
+
+    return adjustedHistory;
+  }
+
+  /**
+   * Ruft detaillierte Informationen (wie Öffnungszeiten) für eine Tankstelle
+   * direkt über den internen Tankerkönig detail.php Proxy ab.
+   */
+  async getStationDetails(stationId) {
+    if (!this.hasValidTankerkoenigKey() || !stationId) {
+      return null;
+    }
+    const creds = this.getCredentials();
+    const tkKey = (creds.tankerkoenigKey || creds.tankerkoenigApiKey || '').trim();
+
+    try {
+      const res = await fetch(`/api/tankerkoenig?id=${encodeURIComponent(stationId)}&apikey=${encodeURIComponent(tkKey)}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data.ok) {
+        return data.station || data;
+      }
+      return null;
+    } catch (e) {
+      console.warn('Failed to fetch station details:', e);
+      return null;
+    }
+  }
+
   async testTankerkoenig(key, lat = 50.9375, lng = 6.9603) {
     if (!key || key.trim() === '') {
-      return { success: false, message: 'Bitte gib einen Tankerkönig API-Key ein.' };
+      return { success: false, message: 'Bitte gib deinen persönlichen Tankerkönig API-Key ein.' };
+    }
+    const cleanKey = key.trim();
+    if (cleanKey === '00000000-0000-0000-0000-000000000002') {
+      return { success: false, message: 'Dies ist der MTS-K Demo-Schlüssel. Bitte fordere auf creativecommons.tankerkoenig.de deinen eigenen kostenlosen Key an.' };
+    }
+    if (cleanKey.length < 30) {
+      return { success: false, message: 'Der API-Key scheint zu kurz zu sein (muss ein gültiger UUID-Key sein).' };
     }
     try {
-      const res = await fetch(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lng}&rad=5&sort=dist&type=all&apikey=${key.trim()}`);
+      const res = await fetch(`/api/tankerkoenig?lat=${lat}&lng=${lng}&rad=5&sort=dist&type=all&apikey=${cleanKey}`);
       const data = await res.json();
       if (data.ok) {
         const count = data.stations ? data.stations.length : 0;
-        return { success: true, message: `Verbindung erfolgreich! ${count} Live-Tankstellen im Testbereich erfasst.` };
+        return { success: true, message: `Verbindung erfolgreich! ${count} echte Live-Tankstellen erfasst.` };
       } else {
         return { success: false, message: data.message || 'Tankerkönig API meldet einen Fehler (ungültiger Key?).' };
       }
@@ -570,50 +518,47 @@ class DataService {
    * Lädt alle Tankstellen inkl. aktueller Preise und Historie.
    * Holt garantiert 100% ECHTE Tankstellen über die offizielle deutsche MTS-K Datenbank (Tankerkönig).
    * Verwendet den internen Serverless / Vite Proxy (/api/tankerkoenig) zur Vermeidung von CORS-Sperren.
+   * STRENG: Wenn kein gültiger persönlicher API-Key vorhanden ist, wird sofort [] zurückgegeben!
    */
   async getStationsWithPrices(fuelType = this.userSettings.fuelPreference, activeLocation = null) {
+    // 0. Streng: Ohne gültigen persönlichen API-Key absolut gar nichts laden
+    if (!this.hasValidTankerkoenigKey()) {
+      return [];
+    }
+
     const creds = this.getCredentials();
-    const tkKey = creds.tankerkoenigKey ? creds.tankerkoenigKey.trim() : '';
+    const tkKey = (creds.tankerkoenigKey || creds.tankerkoenigApiKey || '').trim();
 
     const targetLoc = activeLocation || {
       lat: 52.5200,
       lng: 13.4050,
       radiusKm: 6.0,
-      name: 'Berlin Zentrum',
+      name: 'Mein Standort',
     };
 
     const rad = Math.min(Math.max(targetLoc.radiusKm || 5, 1), 25);
     let stationList = [];
-    let isLive = false;
 
-    // 1. Rufe offizielle Tankerkönig MTS-K Daten ab
-    const candidateEndpoints = [
-      `/api/tankerkoenig?lat=${targetLoc.lat}&lng=${targetLoc.lng}&rad=${rad}&sort=dist&type=all${tkKey ? `&apikey=${tkKey}` : ''}`,
-      `https://creativecommons.tankerkoenig.de/json/list.php?lat=${targetLoc.lat}&lng=${targetLoc.lng}&rad=${rad}&sort=dist&type=all&apikey=${tkKey || '00000000-0000-0000-0000-000000000002'}`
-    ];
+    // 1. Rufe offizielle Tankerkönig MTS-K Daten über den Proxy ab
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7500);
+      const url = `/api/tankerkoenig?lat=${targetLoc.lat}&lng=${targetLoc.lng}&rad=${rad}&sort=dist&type=all&apikey=${encodeURIComponent(tkKey)}`;
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
 
-    for (const url of candidateEndpoints) {
-      if (stationList.length > 0) break;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6500);
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        
-        if (!res.ok) continue;
+      if (res.ok) {
         const data = await res.json();
-        
-        if (data && data.ok && Array.isArray(data.stations) && data.stations.length > 0) {
-          isLive = true;
+        if (data && data.ok && Array.isArray(data.stations)) {
           stationList = data.stations.map((s, idx) => {
             const rawPrice = s[fuelType];
-            // Falls echter Live-Preis vorhanden (und nicht der 1.009 MTS-K Demopreis)
             const hasExactLivePrice = typeof rawPrice === 'number' && rawPrice > 0.5 && Math.abs(rawPrice - 1.009) > 0.005;
-            
-            // Realistischer Preis: entweder exakter Live-Preis oder marktkonforme Berechnung anhand echter Marke & Uhrzeit
-            const calculatedPrice = hasExactLivePrice
-              ? rawPrice
-              : calculateRealisticPriceForRealStation(s, fuelType);
+            const currentLivePrice = hasExactLivePrice ? rawPrice : calculateRealisticPriceForRealStation(s, fuelType);
+
+            // Speichere die echte Messung ab
+            if (hasExactLivePrice) {
+              this.recordRealPriceReading(s.id, fuelType, currentLivePrice, s.isOpen !== false);
+            }
 
             return {
               id: s.id || `tk-station-${idx}`,
@@ -629,7 +574,7 @@ class DataService {
               isOnCommuteRoute: true,
               isOpen: s.isOpen !== false,
               basePriceOffset: 0,
-              livePrice: calculatedPrice,
+              livePrice: currentLivePrice,
               isExactLivePrice: hasExactLivePrice,
             };
           });
@@ -638,49 +583,10 @@ class DataService {
           try {
             localStorage.setItem(`kraftstoff_cached_real_${targetLoc.lat.toFixed(2)}_${targetLoc.lng.toFixed(2)}`, JSON.stringify(stationList));
           } catch {}
-          break;
         }
-      } catch (err) {
-        // Fallthrough to next candidate
       }
-    }
-
-    // 2. Falls 0 Stationen im kleinen Radius (z.B. ländlicher Raum), probiere erweiterten Suchradius (12 km)
-    if (stationList.length === 0 && rad < 10) {
-      try {
-        const widerUrl = `/api/tankerkoenig?lat=${targetLoc.lat}&lng=${targetLoc.lng}&rad=12&sort=dist&type=all${tkKey ? `&apikey=${tkKey}` : ''}`;
-        const res = await fetch(widerUrl);
-        const data = await res.json();
-        if (data && data.ok && Array.isArray(data.stations) && data.stations.length > 0) {
-          isLive = true;
-          stationList = data.stations.map((s, idx) => {
-            const rawPrice = s[fuelType];
-            const hasExactLivePrice = typeof rawPrice === 'number' && rawPrice > 0.5 && Math.abs(rawPrice - 1.009) > 0.005;
-            const calculatedPrice = hasExactLivePrice ? rawPrice : calculateRealisticPriceForRealStation(s, fuelType);
-            return {
-              id: s.id || `tk-station-${idx}`,
-              tankerkoenig_id: s.id,
-              name: s.name,
-              brand: s.brand || (s.name ? s.name.split(' ')[0] : 'Freie Station'),
-              street: `${s.street || ''} ${s.houseNumber || ''}`.trim() || 'Straße unbekannt',
-              city: s.place || targetLoc.name || 'Deutschland',
-              postCode: s.postCode ? String(s.postCode) : '',
-              lat: s.lat,
-              lng: s.lng,
-              distanceKm: typeof s.dist === 'number' ? parseFloat(s.dist.toFixed(1)) : 4.0,
-              isOnCommuteRoute: true,
-              isOpen: s.isOpen !== false,
-              basePriceOffset: 0,
-              livePrice: calculatedPrice,
-              isExactLivePrice: hasExactLivePrice,
-            };
-          });
-        }
-      } catch {}
-    }
-
-    // 3. Falls Offline: Versuche gecachte echte Stationen zu laden
-    if (stationList.length === 0) {
+    } catch (err) {
+      console.warn('Tankerkönig Live fetch failed, checking local cache:', err);
       try {
         const cached = localStorage.getItem(`kraftstoff_cached_real_${targetLoc.lat.toFixed(2)}_${targetLoc.lng.toFixed(2)}`);
         if (cached) {
@@ -689,23 +595,15 @@ class DataService {
       } catch {}
     }
 
-    // 4. Absolutes Sicherheitsnetz falls gar keine Verbindung: INITIAL_STATIONS
+    // Wenn keine echten Stationen gefunden wurden: Rückgabe eines leeren Arrays. Keinerlei Fake-Stationen!
     if (stationList.length === 0) {
-      stationList = INITIAL_STATIONS.map((s) => ({
-        ...s,
-        livePrice: calculateRealisticPriceForRealStation(s, fuelType),
-      }));
+      return [];
     }
 
     const favoriteIds = this.getFavoriteStationIds();
 
     return stationList.map((station) => {
-      const cacheKey = `${station.id}-${fuelType}`;
-      if (!this.cachedHistory.has(cacheKey)) {
-        this.cachedHistory.set(cacheKey, generateRealisticHistory(station, fuelType));
-      }
-      const history = this.cachedHistory.get(cacheKey);
-
+      const history = this.getStationHistory(station, fuelType);
       const latestPoint = history[history.length - 1];
       const baseCurrentPrice = station.livePrice || (latestPoint ? latestPoint.price : 1.699);
 

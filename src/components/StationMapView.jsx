@@ -18,6 +18,7 @@ import {
   Car,
   Layers,
   Star,
+  Key,
 } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { QUICK_CITIES } from '../services/locationService';
@@ -70,6 +71,8 @@ export default function StationMapView({
   selectedStation,
   onSelectStation,
   onCloseSelectedStation,
+  hasValidApiKey = true,
+  onOpenSettings,
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -344,8 +347,50 @@ export default function StationMapView({
       {/* 2. Ethereal Soft White Vignette Overlay (Sanfter weißer Randverlauf an allen Bildschirmrändern) */}
       <div className="map-vignette-overlay" aria-hidden="true" />
 
+      {/* Warnung bei fehlendem API-Key auf der Karte */}
+      {!hasValidApiKey && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '78px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1.5px solid #FCD34D',
+            borderRadius: '14px',
+            padding: '0.75rem 1.15rem',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.65rem',
+            maxWidth: '92%',
+          }}
+        >
+          <div style={{ background: '#FEF3C7', padding: '0.35rem', borderRadius: '8px', color: '#D97706', display: 'flex' }}>
+            <Key size={16} />
+          </div>
+          <div style={{ fontSize: '0.78rem', color: '#1E293B' }}>
+            <strong>Keine Tankstellen auf Karte:</strong> Tankerkönig API-Key erforderlich.
+          </div>
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={onOpenSettings}
+              style={{ fontSize: '0.74rem', padding: '0.32rem 0.75rem', borderRadius: '9999px', whiteSpace: 'nowrap' }}
+            >
+              ⚙️ Key eingeben
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 3. Schwebende, transparente Steuerungsleiste (Unter dem Header zentriert) */}
       <div className="map-floating-toolbar">
+
         
         {/* Zeile 1: Standort-Auswahl, GPS-Button, Sprit-Auswahl & Stationen-Badge */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.45rem' }}>

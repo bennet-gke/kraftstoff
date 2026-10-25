@@ -122,13 +122,91 @@ export default function SettingsModal({
 
         <form onSubmit={handleSubmit}>
 
-          {/* ICLOUD & LOKALER DATEIPFAD (DIREKT-SYNC OHNE DIALOG) */}
+          {/* 1. TANKERKÖNIG API SEKTION (PRIMÄR & ERFORDERLICH) */}
+          <div style={{
+            background: '#FFFFFF',
+            border: '2px solid #F59E0B',
+            borderRadius: '10px',
+            padding: '1rem',
+            marginBottom: '1.25rem',
+            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.08)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <div style={{ background: '#FEF3C7', color: '#D97706', padding: '0.3rem', borderRadius: '6px' }}>
+                  <Key size={16} />
+                </div>
+                <div>
+                  <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                    1. Tankerkönig API-Key (Erforderlich für alle Live-Daten)
+                  </h4>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="badge badge-favorable" style={{ fontSize: '0.68rem', fontWeight: 700 }}>
+                  100% Echte Tankstellen
+                </span>
+                <a 
+                  href="https://creativecommons.tankerkoenig.de/" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  style={{ fontSize: '0.74rem', color: '#0284C7', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.2rem', fontWeight: 700 }}
+                >
+                  <span>Kostenlos Key holen</span>
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.45, marginBottom: '0.65rem' }}>
+              Ohne persönlichen Key werden <strong>keine Tankstellen und keine Preise</strong> angezeigt. Liefert deutschlandweit minütlich frische MTS-K Daten des Bundeskartellamtes für <strong>Diesel, E5 & E10</strong>. Registrierung dauert 1 Minute auf <em>creativecommons.tankerkoenig.de</em>.
+            </p>
+
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.4rem' }}>
+              <input
+                type="text"
+                placeholder="z.B. a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                value={tkKey}
+                onChange={(e) => setTkKey(e.target.value)}
+                style={{ flex: 1, padding: '0.5rem 0.65rem', borderRadius: '6px', border: '1.5px solid #CBD5E1', fontSize: '0.8rem', fontFamily: 'monospace' }}
+              />
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                style={{ fontSize: '0.74rem', padding: '0.5rem 0.85rem', whiteSpace: 'nowrap', fontWeight: 700 }}
+                onClick={handleTestTk}
+                disabled={tkTestState.testing}
+              >
+                {tkTestState.testing ? 'Prüfe...' : 'Key testen'}
+              </button>
+            </div>
+
+            {tkTestState.result && (
+              <div style={{ 
+                marginTop: '0.4rem', 
+                padding: '0.45rem 0.65rem', 
+                borderRadius: '6px', 
+                fontSize: '0.74rem',
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.4rem',
+                background: tkTestState.result.success ? '#ECFDF5' : '#FEF2F2',
+                color: tkTestState.result.success ? '#065F46' : '#991B1B',
+                border: `1px solid ${tkTestState.result.success ? '#A7F3D0' : '#FECACA'}`
+              }}>
+                {tkTestState.result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                <span>{tkTestState.result.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* 2. ICLOUD & LOKALER DATEIPFAD (DIREKT-SYNC OHNE DIALOG) */}
           <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.95rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Cloud size={16} color="#0284C7" />
                 <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  iCloud Drive Dateipfad (1-Klick-Sync ohne Finder-Dialog)
+                  2. iCloud Drive Dateipfad (1-Klick-Sync ohne Finder-Dialog)
                 </h4>
               </div>
               <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
@@ -198,68 +276,6 @@ export default function SettingsModal({
                     ? `✓ Datei existiert im Mac iCloud Drive (${pathStatus.path})! Bereit für 1-Klick Sync.`
                     : `Datei existiert noch nicht. Sie wird beim ersten Klick auf "In iCloud sichern" automatisch dort erstellt.`}
                 </span>
-              </div>
-            )}
-          </div>
-          
-          {/* TANKERKÖNIG API SEKTION */}
-          <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.95rem', marginBottom: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Key size={15} color="#0284C7" />
-                <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  1. Tankerkönig API (Echtzeit-Schnittstelle)
-                </h4>
-              </div>
-              <a 
-                href="https://creativecommons.tankerkoenig.de/" 
-                target="_blank" 
-                rel="noreferrer"
-                style={{ fontSize: '0.72rem', color: '#0284C7', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}
-              >
-                <span>Key anfordern (Kostenlos)</span>
-                <ExternalLink size={12} />
-              </a>
-            </div>
-
-            <p style={{ fontSize: '0.74rem', color: '#64748B', lineHeight: 1.45, marginBottom: '0.65rem' }}>
-              Liefert deutschlandweit minütlich frische MTS-K Daten des Bundeskartellamtes für <strong>Diesel, E5 & E10</strong>. Registrierung dauert 1 Minute (Name + E-Mail) auf <em>creativecommons.tankerkoenig.de</em>.
-            </p>
-
-            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.4rem' }}>
-              <input
-                type="text"
-                placeholder="z.B. a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-                value={tkKey}
-                onChange={(e) => setTkKey(e.target.value)}
-                style={{ flex: 1, padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.78rem', fontFamily: 'monospace' }}
-              />
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                style={{ fontSize: '0.74rem', padding: '0.45rem 0.75rem', whiteSpace: 'nowrap' }}
-                onClick={handleTestTk}
-                disabled={tkTestState.testing}
-              >
-                {tkTestState.testing ? 'Prüfe...' : 'Testen'}
-              </button>
-            </div>
-
-            {tkTestState.result && (
-              <div style={{ 
-                marginTop: '0.4rem', 
-                padding: '0.4rem 0.6rem', 
-                borderRadius: '6px', 
-                fontSize: '0.73rem',
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '0.4rem',
-                background: tkTestState.result.success ? '#ECFDF5' : '#FEF2F2',
-                color: tkTestState.result.success ? '#065F46' : '#991B1B',
-                border: `1px solid ${tkTestState.result.success ? '#A7F3D0' : '#FECACA'}`
-              }}>
-                {tkTestState.result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                <span>{tkTestState.result.message}</span>
               </div>
             )}
           </div>
