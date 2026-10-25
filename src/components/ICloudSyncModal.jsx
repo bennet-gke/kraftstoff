@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { Cloud, Download, Upload, Check, AlertCircle, RefreshCw, X, FolderSync, Smartphone, Laptop } from 'lucide-react';
-import { backupService } from '../services/backupService';
+import React, { useState, useRef, useEffect } from 'react';
+import { Cloud, Download, Upload, Check, AlertCircle, RefreshCw, X, FolderSync, Smartphone, Laptop, CheckCircle2 } from 'lucide-react';
+import { backupService, FIXED_ICLOUD_PATH } from '../services/backupService';
 
 export default function ICloudSyncModal({
   isOpen,
@@ -9,23 +9,78 @@ export default function ICloudSyncModal({
 }) {
   const [statusMessage, setStatusMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [serverStatus, setServerStatus] = useState(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      backupService.checkServerStatus().then((status) => {
+        setServerStatus(status);
+      });
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleExport = () => {
+  // 1-Klick Direkt-Export in festen iCloud-Pfad
+  const handleExport = async () => {
+    setIsProcessing(true);
+    setStatusMessage(null);
     try {
-      backupService.downloadBackupFile('kraftstoff_daten.json');
-      setStatusMessage({
-        type: 'success',
-        text: 'Datei "kraftstoff_daten.json" heruntergeladen! Lege sie einfach in deinen iCloud Drive Ordner.',
-      });
-      setTimeout(() => setStatusMessage(null), 5000);
+      const res = await backupService.directSyncToICloud();
+      if (res.method === 'direct-file') {
+        setStatusMessage({
+          type: 'success',
+          text: `✓ Erfolgreich direkt in iCloud Drive gespeichert (${res.directPath})!`,
+        });
+      } else {
+        backupService.downloadBackupFile('kraftstoff_daten.json');
+        setStatusMessage({
+          type: 'success',
+          text: '✓ Datei "kraftstoff_daten.json" für iCloud Drive heruntergeladen.',
+        });
+      }
+      setTimeout(() => setStatusMessage(null), 4000);
     } catch (err) {
       setStatusMessage({
         type: 'error',
         text: `Export fehlgeschlagen: ${err.message}`,
       });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 1-Klick Direkt-Import aus festem iCloud-Pfad
+  const handleImport = async () => {
+    setIsProcessing(true);
+    setStatusMessage(null);
+    try {
+      const res = await backupService.directSyncFromICloud();
+      if (res.method === 'direct-file') {
+        setStatusMessage({
+          type: 'success',
+          text: `✓ Erfolgreich aus iCloud Drive synchronisiert! (${res.locationCount} Standorte, ${res.vehicleCount} Autos & Einstellungen geladen)`,
+        });
+        if (onSyncComplete) {
+          onSyncComplete(res.data);
+        }
+        setTimeout(() => {
+          setStatusMessage(null);
+          onClose();
+        }, 1500);
+        return;
+      }
+      // Fallback: Dateiauswahldialog öffnen
+      fileInputRef.current?.click();
+    } catch (err) {
+      setStatusMessage({
+        type: 'error',
+        text: `${err.message} Öffne Dateidialog...`,
+      });
+      fileInputRef.current?.click();
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -50,7 +105,7 @@ export default function ICloudSyncModal({
       setTimeout(() => {
         setStatusMessage(null);
         onClose();
-      }, 1800);
+      }, 1500);
     } catch (err) {
       setStatusMessage({
         type: 'error',
@@ -76,10 +131,10 @@ export default function ICloudSyncModal({
             </div>
             <div>
               <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
-                iCloud Drive & Geräte-Sync
+                iCloud Drive Direkt-Sync
               </h3>
               <p style={{ fontSize: '0.76rem', color: '#64748B' }}>
-                Einfacher Dateiaustausch zwischen deinem Mac und iPhone
+                Automatischer Sync über die feste iCloud-Datei im Code
               </p>
             </div>
           </div>
@@ -89,16 +144,33 @@ export default function ICloudSyncModal({
           </button>
         </div>
 
-        {/* Kurzanleitung */}
-        <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1.25rem', fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', color: '#0F172A', fontWeight: 700 }}>
-            <FolderSync size={15} color="#0284C7" />
-            <span>So funktioniert der iCloud-Sync:</span>
+        {/* Fester Dateipfad im Code */}
+        <div style={{
+          background: '#0F172A',
+          color: '#E2E8F0',
+          borderRadius: '8px',
+          padding: '0.75rem 0.95rem',
+          marginBottom: '1rem',
+          fontSize: '0.75rem',
+          border: '1px solid #1E293B',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+            <span style={{ color: '#94A3B8', fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700 }}>
+              Fester Speicherort im Code:
+            </span>
+            <span style={{ color: '#38BDF8', fontSize: '0.68rem', fontWeight: 700 }}>
+              Immer aktiv
+            </span>
           </div>
-          <ol style={{ paddingLeft: '1.2rem', margin: 0 }}>
-            <li>Klicke auf <strong>„In iCloud sichern“</strong> und speichere die Datei <code>kraftstoff_daten.json</code> in deinem <em>iCloud Drive</em>.</li>
-            <li>Öffne die App auf deinem anderen Gerät (z.B. iPhone) und klicke auf <strong>„Aus iCloud aktualisieren“</strong> – wähle dort einfach dieselbe Datei aus.</li>
-          </ol>
+          <div style={{ fontFamily: 'monospace', color: '#38BDF8', wordBreak: 'break-all' }}>
+            {FIXED_ICLOUD_PATH}
+          </div>
+          {serverStatus?.exists && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.4rem', color: '#4ADE80', fontSize: '0.72rem' }}>
+              <CheckCircle2 size={13} />
+              <span>Datei existiert und ist sofort synchronisierbar!</span>
+            </div>
+          )}
         </div>
 
         {/* Status Feedback */}
@@ -131,7 +203,7 @@ export default function ICloudSyncModal({
           style={{ display: 'none' }}
         />
 
-        {/* Die beiden Hauptaktionen */}
+        {/* Die beiden Hauptaktionen (1-Klick) */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem', marginBottom: '1.25rem' }}>
           
           {/* Export */}
@@ -139,6 +211,7 @@ export default function ICloudSyncModal({
             type="button"
             className="btn btn-secondary"
             onClick={handleExport}
+            disabled={isProcessing}
             style={{
               padding: '1rem 0.75rem',
               display: 'flex',
@@ -157,7 +230,7 @@ export default function ICloudSyncModal({
                 In iCloud sichern
               </strong>
               <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
-                kraftstoff_daten.json exportieren
+                Direkt in iCloud-Datei schreiben
               </span>
             </div>
           </button>
@@ -166,7 +239,7 @@ export default function ICloudSyncModal({
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handleImport}
             disabled={isProcessing}
             style={{
               padding: '1rem 0.75rem',
@@ -185,7 +258,7 @@ export default function ICloudSyncModal({
                 {isProcessing ? 'Lese Datei...' : 'Aus iCloud aktualisieren'}
               </strong>
               <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>
-                Datei aus iCloud Drive laden
+                Direkt aus iCloud-Datei lesen
               </span>
             </div>
           </button>
@@ -198,7 +271,7 @@ export default function ICloudSyncModal({
             <Laptop size={14} />
             <span>Mac</span>
           </div>
-          <span style={{ color: '#CBD5E1' }}>⟷ iCloud Drive ⟷</span>
+          <span style={{ color: '#CBD5E1' }}>⟷ Feste iCloud-Datei ⟷</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <Smartphone size={14} />
             <span>iPhone / iPad</span>
@@ -209,3 +282,4 @@ export default function ICloudSyncModal({
     </div>
   );
 }
+

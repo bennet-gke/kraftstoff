@@ -11,30 +11,23 @@ import { locationService } from './locationService';
 import { routeService } from './routeService';
 import { dataService } from './dataService';
 
-const STORAGE_KEY_PATH = 'KRAFTSTOFF_ICLOUD_PATH';
-const DEFAULT_MAC_PATH = '~/Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json';
+// Fester, unveränderlicher Pfad zu iCloud Drive auf macOS (immer an derselben Stelle im Code verankert)
+export const FIXED_ICLOUD_PATH = '~/Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json';
 
 class BackupService {
   constructor() {
-    this.customPath = this.getCustomPath();
+    this.fixedPath = FIXED_ICLOUD_PATH;
+    this.customPath = FIXED_ICLOUD_PATH;
   }
 
   getCustomPath() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_PATH);
-      return stored || DEFAULT_MAC_PATH;
-    } catch {
-      return DEFAULT_MAC_PATH;
-    }
+    return FIXED_ICLOUD_PATH;
   }
 
-  setCustomPath(newPath) {
-    this.customPath = (newPath || DEFAULT_MAC_PATH).trim();
-    try {
-      localStorage.setItem(STORAGE_KEY_PATH, this.customPath);
-    } catch {}
-    return this.customPath;
+  setCustomPath() {
+    return FIXED_ICLOUD_PATH;
   }
+
 
   /**
    * Prüft, ob der lokale Vite/Mac Server für direkten Pfad-Zugriff erreichbar ist.

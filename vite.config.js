@@ -5,20 +5,13 @@ import path from 'path'
 import os from 'os'
 
 function icloudSyncPlugin() {
-  const getDefaultPath = () => {
-    return path.join(os.homedir(), 'Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json')
+  // Fester, unveränderlicher Pfad im Code: Sucht und speichert immer genau an dieser Stelle in iCloud Drive
+  const FIXED_ICLOUD_PATH = path.join(os.homedir(), 'Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json')
+
+  const resolveUserPath = () => {
+    return FIXED_ICLOUD_PATH
   }
 
-  const resolveUserPath = (inputPath) => {
-    if (!inputPath || inputPath.trim() === '') {
-      return getDefaultPath()
-    }
-    let p = inputPath.trim()
-    if (p.startsWith('~/')) {
-      p = path.join(os.homedir(), p.slice(2))
-    }
-    return path.resolve(p)
-  }
 
   return {
     name: 'icloud-sync-plugin',
@@ -35,7 +28,7 @@ function icloudSyncPlugin() {
         // GET /api/icloud-sync/check -> Status & Pfad-Informationen
         if (parsedUrl.pathname === '/api/icloud-sync/check') {
           const filePath = resolveUserPath(queryPath)
-          const defaultPath = getDefaultPath()
+          const defaultPath = FIXED_ICLOUD_PATH
           const exists = fs.existsSync(filePath)
           let stats = null
           if (exists) {

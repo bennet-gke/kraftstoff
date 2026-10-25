@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Database, Key, Clock, Check, X, ExternalLink, Info, AlertCircle, CheckCircle2, Cloud } from 'lucide-react';
 import { dataService } from '../services/dataService';
-import { backupService } from '../services/backupService';
+import { backupService, FIXED_ICLOUD_PATH } from '../services/backupService';
 
 export default function SettingsModal({
   isOpen,
@@ -20,8 +20,7 @@ export default function SettingsModal({
   const [commuteEveningStart, setCommuteEveningStart] = useState(settings.commuteEveningStart || '16:30');
   const [commuteEveningEnd, setCommuteEveningEnd] = useState(settings.commuteEveningEnd || '18:45');
 
-  // iCloud Pfad State
-  const [iCloudPath, setICloudPath] = useState(backupService.getCustomPath());
+  // iCloud Status State
   const [pathStatus, setPathStatus] = useState(null);
   const [isTestingPath, setIsTestingPath] = useState(false);
 
@@ -45,7 +44,6 @@ export default function SettingsModal({
 
   const handleCheckPath = async () => {
     setIsTestingPath(true);
-    backupService.setCustomPath(iCloudPath);
     const status = await backupService.checkServerStatus();
     setPathStatus(status);
     setIsTestingPath(false);
@@ -72,9 +70,6 @@ export default function SettingsModal({
       supabaseKey: supabaseKey.trim(),
       tankerkoenigKey: tkKey.trim(),
     });
-
-    // Save iCloud Path
-    backupService.setCustomPath(iCloudPath);
 
     // Save user settings
     onSaveSettings({
@@ -200,35 +195,35 @@ export default function SettingsModal({
             )}
           </div>
 
-          {/* 2. ICLOUD & LOKALER DATEIPFAD (DIREKT-SYNC OHNE DIALOG) */}
+          {/* 2. ICLOUD SPEICHERORT (FEST IM CODE VERANKERT) */}
           <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.95rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Cloud size={16} color="#0284C7" />
                 <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  2. iCloud Drive Dateipfad (1-Klick-Sync ohne Finder-Dialog)
+                  2. iCloud Drive Speicherort (Fest im Code verankert)
                 </h4>
               </div>
               <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
-                Automatisch aktiv
+                Fest im Code
               </span>
             </div>
 
             <p style={{ fontSize: '0.74rem', color: '#64748B', lineHeight: 1.45, marginBottom: '0.65rem' }}>
-              Hinterlege hier einmalig den Pfad zu deiner <code>kraftstoff_daten.json</code> in iCloud Drive. Beim Klick auf <strong>„Aus iCloud aktualisieren“</strong> oder <strong>„In iCloud sichern“</strong> wird diese Datei direkt im Hintergrund gelesen/geschrieben – ganz ohne dass jedes Mal ein Dateiauswahl-Fenster aufpoppt!
+              Die App greift unabhängig vom Aufrufort immer automatisiert auf dieselbe Datei in deinem macOS iCloud Drive zu:
             </p>
 
-            <div style={{ marginBottom: '0.6rem' }}>
-              <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: '#334155', marginBottom: '0.2rem' }}>
-                Speicherpfad auf deinem Mac:
-              </label>
-              <input
-                type="text"
-                value={iCloudPath}
-                onChange={(e) => setICloudPath(e.target.value)}
-                placeholder="~/Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json"
-                style={{ width: '100%', padding: '0.42rem 0.65rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.76rem', fontFamily: 'monospace' }}
-              />
+            <div style={{
+              padding: '0.55rem 0.75rem',
+              background: '#0F172A',
+              color: '#38BDF8',
+              borderRadius: '6px',
+              fontSize: '0.74rem',
+              fontFamily: 'monospace',
+              wordBreak: 'break-all',
+              marginBottom: '0.65rem'
+            }}>
+              {FIXED_ICLOUD_PATH}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -239,21 +234,7 @@ export default function SettingsModal({
                 disabled={isTestingPath}
                 style={{ fontSize: '0.72rem' }}
               >
-                {isTestingPath ? 'Prüfe Pfad...' : 'Pfad prüfen & testen'}
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  const defaultP = '~/Library/Mobile Documents/com~apple~CloudDocs/kraftstoff_daten.json';
-                  setICloudPath(defaultP);
-                  backupService.setCustomPath(defaultP);
-                  handleCheckPath();
-                }}
-                style={{ fontSize: '0.72rem' }}
-              >
-                Auf Standard-iCloud zurücksetzen
+                {isTestingPath ? 'Prüfe Verbindung...' : 'Verbindung prüfen'}
               </button>
             </div>
 
@@ -286,7 +267,7 @@ export default function SettingsModal({
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Database size={15} color="#059669" />
                 <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  2. Supabase Backend (PostgreSQL Cloud)
+                  3. Supabase Backend (PostgreSQL Cloud)
                 </h4>
               </div>
               <a 

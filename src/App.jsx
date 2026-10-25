@@ -23,6 +23,7 @@ import { vehicleService } from './services/vehicleService';
 import { locationService } from './services/locationService';
 import { routeService } from './services/routeService';
 import { notificationService } from './services/notificationService';
+import { backupService } from './services/backupService';
 
 import { evaluatePriceEngine } from './engine/adaptiveAverage';
 import { initAndTrainModel, predictPriceScore, continuouslyTrainOnHistory } from './engine/mlModel';
@@ -155,6 +156,15 @@ export default function App() {
   };
 
   useEffect(() => {
+    // 1. Automatisch prüfen, ob Daten am fest im Code verankerten iCloud Drive Pfad vorliegen
+    backupService.directSyncFromICloud()
+      .then((res) => {
+        if (res && res.method === 'direct-file' && res.data) {
+          handleICloudSyncComplete(res.data);
+        }
+      })
+      .catch(() => {});
+
     loadData(selectedFuel);
     initAndTrainModel(15).catch((err) => console.log('TF init background:', err));
 
