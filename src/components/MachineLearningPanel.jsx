@@ -85,7 +85,7 @@ export default function MachineLearningPanel({
   const dayNames = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.5rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.5rem', paddingBottom: '2.5rem' }}>
       
       {/* 1. Header & Kontinuierlicher Trainings-Status */}
       <div className="clean-card" style={{ padding: '1.25rem' }}>
@@ -410,20 +410,23 @@ export default function MachineLearningPanel({
             })}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.65rem', fontSize: '0.74rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.6rem', marginTop: '0.85rem', fontSize: '0.74rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#059669' }} />
-                <span>Günstigstes Zeitfenster</span>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#059669', flexShrink: 0 }} />
+                <span>Günstigstes Fenster</span>
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#DC2626' }} />
-                <span>Teuerste Spitze (Morgenverkehr/Nacht)</span>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#DC2626', flexShrink: 0 }} />
+                <span>Teuerste Spitze</span>
               </span>
             </div>
 
-            <div style={{ fontWeight: 700, color: '#059669' }}>
-              Max. Tagesschwankung: <strong>{neural24h.potentialSavingsCent} Cent/Liter</strong>
+            <div
+              className="badge badge-favorable"
+              style={{ fontWeight: 700, fontSize: '0.74rem', whiteSpace: 'nowrap' }}
+            >
+              Tagesschwankung: ~{neural24h.potentialSavingsCent} ct/L
             </div>
           </div>
         </div>

@@ -646,6 +646,14 @@ body {
   transform: scale(0.95);
 }
 
+@media (max-width: 480px) {
+  .filter-pill {
+    padding: 0.35rem 0.65rem;
+    font-size: 0.72rem;
+    gap: 0.28rem;
+  }
+}
+
 .filter-pill.active {
   background: #0F172A;
   color: #FFFFFF;

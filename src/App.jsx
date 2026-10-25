@@ -73,6 +73,7 @@ export default function App() {
   // Favoriten Zustand & 3-Wege-Filter (Ort | Route | Favoriten)
   const [favoriteStationIds, setFavoriteStationIds] = useState(() => dataService.getFavoriteStationIds());
   const [filterMode, setFilterMode] = useState(() => (routeService.activeRouteId ? 'route' : 'location'));
+  const [trendsStationId, setTrendsStationId] = useState('');
 
   // Fahrt-Option & Fahrzeug-Overrides
   const [detourMode, setDetourMode] = useState(routeService.activeRouteId ? 'route_corridor' : 'local_roundtrip');
@@ -428,6 +429,7 @@ export default function App() {
   }, [evaluatedStations, isCommuteActive, sortBy]);
 
   const bestStation = sortedStations[0];
+  const targetTrendStation = sortedStations.find((s) => s.id === trendsStationId) || bestStation || stations[0];
 
   // Automatische Preisschwellen-Prüfung für Push & Akustik-Chime
   useEffect(() => {
@@ -615,7 +617,7 @@ export default function App() {
       </header>
 
       {/* Hauptinhalt */}
-      <main className="main-content-mobile" style={{ flex: 1, paddingBottom: '2.5rem' }}>
+      <main className="main-content-mobile" style={{ flex: 1, paddingBottom: 'calc(6.5rem + env(safe-area-inset-bottom, 20px))' }}>
 
         {/* Prominenter Banner bei fehlendem Tankerkönig API-Key */}
         {!hasValidApiKey && (
@@ -1063,28 +1065,127 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Fokus-Tankstellen-Wähler für Trendanalysen */}
+              {sortedStations.length > 0 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: '#FFFFFF',
+                    padding: '0.75rem 1rem',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    flexWrap: 'wrap',
+                    gap: '0.65rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <BarChart3 size={16} color="#0F172A" />
+                    <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
+                      Fokus-Tankstelle für Trend-Analyse:
+                    </span>
+                  </div>
+                  <select
+                    value={trendsStationId || targetTrendStation?.id || ''}
+                    onChange={(e) => setTrendsStationId(e.target.value)}
+                    style={{
+                      padding: '0.35rem 0.65rem',
+                      borderRadius: '8px',
+                      border: '1px solid #CBD5E1',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      color: '#0F172A',
+                      background: '#F8FAFC',
+                      cursor: 'pointer',
+                      maxWidth: '280px',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {sortedStations.map((st, idx) => (
+                      <option key={st.id} value={st.id}>
+                        {idx === 0 ? '🏆 ' : ''}{st.name} ({st.currentPrice ? st.currentPrice.toFixed(3) : ''} €)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Regionale Preis- und Sparhebel-Zusammenfassung */}
+              {sortedStations.length > 1 && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: '0.75rem',
+                  }}
+                >
+                  <div className="clean-card" style={{ padding: '0.85rem 1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>Günstigste Station:</span>
+                      <span className="badge badge-favorable" style={{ fontSize: '0.65rem' }}>Tiefstpreis</span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {sortedStations[0].name}
+                    </div>
+                    <div className="num-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: '#059669', marginTop: '0.2rem' }}>
+                      {sortedStations[0].currentPrice?.toFixed(3)} €/L
+                    </div>
+                  </div>
+
+                  <div className="clean-card" style={{ padding: '0.85rem 1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>Teuerste Station:</span>
+                      <span className="badge badge-unfavorable" style={{ fontSize: '0.65rem' }}>Höchstpreis</span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {sortedStations[sortedStations.length - 1].name}
+                    </div>
+                    <div className="num-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: '#DC2626', marginTop: '0.2rem' }}>
+                      {sortedStations[sortedStations.length - 1].currentPrice?.toFixed(3)} €/L
+                    </div>
+                  </div>
+
+                  <div className="clean-card" style={{ padding: '0.85rem 1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>Regionale Preisspanne:</span>
+                      <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>Sparpotenzial</span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0F172A' }}>
+                      {activeVehicle ? `${activeVehicle.name} (${activeVehicle.tankCapacityL} L)` : 'Tankfüllung (45 L)'}:
+                    </div>
+                    <div className="num-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: '#2563EB', marginTop: '0.2rem' }}>
+                      +{(((sortedStations[sortedStations.length - 1].currentPrice - sortedStations[0].currentPrice) * (activeVehicle?.tankCapacityL || 45))).toFixed(2)} €
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* 1. Die "Typische Woche" - Dynamischer Wochenzyklus mit Hoch- und Tiefzeiten */}
               <TypicalWeekChart
-                baseFuelPrice={bestStation ? bestStation.currentPrice : 1.72}
+                baseFuelPrice={targetTrendStation ? targetTrendStation.currentPrice : 1.72}
                 fuelType={selectedFuel}
                 taxReliefCent={activeTaxReliefCent}
+                activeVehicle={activeVehicle}
+                settings={settings}
+                stationName={targetTrendStation?.name}
               />
 
               {/* 2. D3 Heatmap 7 Tage x 24 Stunden Matrix */}
               <HeatmapChart
-                history={bestStation?.history || []}
+                history={targetTrendStation?.history || []}
                 fuelType={selectedFuel}
-                stationName={bestStation?.name}
+                stationName={targetTrendStation?.name}
               />
 
               {/* 3. D3 Preisverlauf mit AMA und Volatilitätsband */}
-              {bestStation && (
+              {targetTrendStation && (
                 <PriceTrendChart
-                  history={bestStation.history}
-                  stationName={bestStation.name}
+                  history={targetTrendStation.history}
+                  stationName={targetTrendStation.name}
                   fuelType={selectedFuel}
-                  evaluation={bestStation.evaluation}
+                  evaluation={targetTrendStation.evaluation}
                 />
               )}
             </div>

@@ -114,38 +114,60 @@ export default function StationDetailModal({
                 {station.name}
               </h3>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#64748B', fontSize: '0.78rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <MapPin size={13} color="#94A3B8" />
-                <span>{station.street}, {station.postCode || ''} {station.city}</span>
-              </div>
-              <span>•</span>
-              <span className="num-mono" style={{ fontWeight: 600 }}>{station.distanceKm} km entfernt</span>
-              <span>•</span>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.2rem',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                color: station.isOpen !== false ? '#059669' : '#DC2626',
-                background: station.isOpen !== false ? '#ECFDF5' : '#FEF2F2',
-                padding: '0.1rem 0.4rem',
-                borderRadius: '4px',
-              }}>
+            {/* Adresse & Ort */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#64748B', fontSize: '0.78rem', marginTop: '0.25rem' }}>
+              <MapPin size={13} color="#94A3B8" style={{ flexShrink: 0 }} />
+              <span style={{ wordBreak: 'break-word' }}>{station.street}, {station.postCode || ''} {station.city}</span>
+            </div>
+
+            {/* Status-Badges (ohne umbrechende Bullet-Dots) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  color: '#334155',
+                  background: '#F1F5F9',
+                  padding: '0.15rem 0.45rem',
+                  borderRadius: '6px',
+                }}
+              >
+                <Navigation size={11} color="#64748B" />
+                <span className="num-mono">{station.distanceKm} km entfernt</span>
+              </span>
+
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  color: station.isOpen !== false ? '#065F46' : '#DC2626',
+                  background: station.isOpen !== false ? '#ECFDF5' : '#FEF2F2',
+                  padding: '0.15rem 0.45rem',
+                  borderRadius: '6px',
+                }}
+              >
                 {station.isOpen !== false ? '● Jetzt Geöffnet' : '● Derzeit Geschlossen'}
               </span>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.2rem',
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                color: '#0284C7',
-                background: '#F0F9FF',
-                padding: '0.1rem 0.4rem',
-                borderRadius: '4px',
-              }}>
+
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  color: '#0284C7',
+                  background: '#F0F9FF',
+                  padding: '0.15rem 0.45rem',
+                  borderRadius: '6px',
+                }}
+              >
                 <ShieldCheck size={11} />
                 <span>MTS-K Echtzeitdaten</span>
               </span>

@@ -117,8 +117,8 @@ export default function RouteScheduleBar({
 
   const getFuelLabel = () => {
     switch (selectedFuel) {
-      case 'e10': return 'Super E10';
-      case 'e5': return 'Super E5';
+      case 'e10': return 'E10';
+      case 'e5': return 'E5';
       default: return 'Diesel';
     }
   };

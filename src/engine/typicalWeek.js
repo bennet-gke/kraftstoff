@@ -103,7 +103,7 @@ export function generateTypicalWeeklyProfile({
     },
     {
       type: 'EXPENSIVE',
-      title: 'Morgen-Rushhour (Hochzeit)',
+      title: 'Morgen-Rushhour (Teure Preisspitze)',
       day: 'Montag bis Freitag',
       time: '06:30 – 08:45 Uhr',
       avgDeltaCent: +7.5,
@@ -112,7 +112,7 @@ export function generateTypicalWeeklyProfile({
     },
     {
       type: 'EXPENSIVE',
-      title: 'Nachtphase (Hochzeit)',
+      title: 'Nachtphase (Nachtaufschlag)',
       day: 'Täglich',
       time: '22:00 – 05:30 Uhr',
       avgDeltaCent: +4.8,
@@ -121,11 +121,18 @@ export function generateTypicalWeeklyProfile({
     },
   ];
 
+  // Personalisierte Sparhebel-Berechnungen
+  const morningPeakDeltaCent = 7.5;
+  const eveningLowDeltaCent = -5.8;
+  const commuteShiftSavingsCentPerLiter = parseFloat((morningPeakDeltaCent - eveningLowDeltaCent).toFixed(1)); // 13.3 ct/L
+
   return {
     hourlyData,
     minPrice,
     maxPrice,
     baseFuelPrice,
     topWindows,
+    commuteShiftSavingsCentPerLiter,
+    bestVsWorstDayDeltaCent: 14.5, // Dienstag Abend vs. Freitag Morgen
   };
 }

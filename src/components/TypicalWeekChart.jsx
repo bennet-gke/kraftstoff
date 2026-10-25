@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
-import { Calendar, Clock, TrendingDown, TrendingUp, Sparkles } from 'lucide-react';
+import { Calendar, Clock, TrendingDown, TrendingUp, Sparkles, Car, ShieldAlert, Award, ArrowRight } from 'lucide-react';
 import { generateTypicalWeeklyProfile } from '../engine/typicalWeek';
 
 export default function TypicalWeekChart({
   baseFuelPrice = 1.72,
   fuelType = 'diesel',
   taxReliefCent = 0,
+  activeVehicle = null,
+  settings = null,
+  stationName = 'Beste Station in der Region',
 }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -19,6 +22,15 @@ export default function TypicalWeekChart({
       taxReliefCent,
     });
   }, [baseFuelPrice, fuelType, taxReliefCent]);
+
+  const tankLiters = activeVehicle?.tankCapacityL || 45;
+  const commuteShiftSavingsEuro = useMemo(() => {
+    return ((profile.commuteShiftSavingsCentPerLiter * tankLiters) / 100).toFixed(2);
+  }, [profile, tankLiters]);
+
+  const yearlySavingsEuro = useMemo(() => {
+    return Math.round(parseFloat(commuteShiftSavingsEuro) * 24);
+  }, [commuteShiftSavingsEuro]);
 
   // Aktuelle Stunde berechnen (0..167)
   const now = new Date();
@@ -260,12 +272,57 @@ export default function TypicalWeekChart({
                 {currentPoint.isLowWindow
                   ? 'Günstiges Tiefzeit-Fenster!'
                   : currentPoint.isPeakWindow
-                  ? 'Teure Hochzeit (Spitze)'
+                  ? 'Teure Preisspitze (Rushhour)'
                   : 'Normales Mittelfeld'}
               </strong>
             </span>
           </div>
         )}
+      </div>
+
+      {/* Personalisierte Fahrzeug-Sparhebel-Analyse */}
+      <div style={{
+        background: 'linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%)',
+        border: '1px solid #BFDBFE',
+        borderRadius: '10px',
+        padding: '0.85rem 1rem',
+        marginBottom: '1rem',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '0.75rem',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: '220px', flex: 1 }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#2563EB', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Car size={18} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <strong style={{ fontSize: '0.85rem', color: '#0F172A' }}>
+                {activeVehicle?.name || 'Dein Fahrzeug'}: Pendler-Verlagerungs-Sparpotenzial
+              </strong>
+            </div>
+            <p style={{ fontSize: '0.74rem', color: '#475569', margin: '0.15rem 0 0' }}>
+              Wenn du abends ({settings?.commuteEveningStart || '18:00'}–{settings?.commuteEveningEnd || '19:30'}) statt morgens ({settings?.commuteMorningStart || '07:30'}–{settings?.commuteMorningEnd || '08:45'}) tankst:
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0 }}>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Pro Volltankung ({tankLiters} L)</span>
+            <strong className="num-mono" style={{ fontSize: '1.05rem', color: '#059669', fontWeight: 800 }}>
+              +{commuteShiftSavingsEuro} €
+            </strong>
+          </div>
+          <div style={{ borderLeft: '1px solid #CBD5E1', paddingLeft: '1rem', textAlign: 'right' }}>
+            <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Ersparnis im Jahr</span>
+            <strong className="num-mono" style={{ fontSize: '1.05rem', color: '#2563EB', fontWeight: 800 }}>
+              ~{yearlySavingsEuro} €
+            </strong>
+          </div>
+        </div>
       </div>
 
       {/* SVG Canvas */}
