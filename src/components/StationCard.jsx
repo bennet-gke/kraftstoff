@@ -140,6 +140,24 @@ export default function StationCard({
               {station.name}
             </h4>
 
+            {station.isOpen === false && (
+              <span
+                style={{
+                  fontSize: '0.62rem',
+                  fontWeight: 700,
+                  color: '#DC2626',
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  padding: '0.1rem 0.38rem',
+                  borderRadius: '4px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                Geschlossen
+              </span>
+            )}
+
             <button
               type="button"
               onClick={(e) => {

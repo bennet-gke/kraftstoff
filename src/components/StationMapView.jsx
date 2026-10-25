@@ -299,14 +299,15 @@ export default function StationMapView({
 
     // 4. Zeichne Tankstellen als benutzerdefinierte bunte Preis-Chips
     stations.forEach((st) => {
-      const isCheap = st.evaluation?.isCheap;
+      const isClosed = st.isOpen === false;
+      const isCheap = st.evaluation?.isCheap && !isClosed;
       const isSelected = selectedStation?.id === st.id;
       const isFavorite = favoriteStationIds.includes(st.id) || st.isFavorite;
       const priceStr = st.currentPrice ? st.currentPrice.toFixed(3) : '1.699';
 
-      const chipBg = isSelected ? '#0F172A' : isCheap ? '#059669' : '#FFFFFF';
-      const chipColor = isSelected || isCheap ? '#FFFFFF' : '#0F172A';
-      const chipBorder = isSelected ? '#38BDF8' : isFavorite ? '#F59E0B' : '#FFFFFF';
+      const chipBg = isSelected ? '#0F172A' : isClosed ? '#F8FAFC' : isCheap ? '#059669' : '#FFFFFF';
+      const chipColor = isSelected ? '#FFFFFF' : isClosed ? '#64748B' : isCheap ? '#FFFFFF' : '#0F172A';
+      const chipBorder = isSelected ? '#38BDF8' : isClosed ? '#EF4444' : isFavorite ? '#F59E0B' : '#FFFFFF';
 
       const customIcon = L.divIcon({
         className: 'station-price-chip-wrap',
@@ -328,8 +329,9 @@ export default function StationMapView({
             cursor: pointer;
             transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
             transform: translate(-50%, -50%) ${isSelected ? 'scale(1.18)' : 'scale(1)'};
+            opacity: ${isClosed ? '0.75' : '1.0'};
           ">
-            <span style="font-size: 9.5px; opacity: 0.9; text-transform: uppercase;">${isFavorite ? '⭐ ' : ''}${st.brand || 'Frei'}</span>
+            <span style="font-size: 9.5px; opacity: 0.9; text-transform: uppercase;">${isFavorite ? '⭐ ' : ''}${st.brand || 'Frei'}${isClosed ? ' (Zu)' : ''}</span>
             <span style="font-family: var(--font-mono, monospace); font-size: 12px; font-weight: 800;">${priceStr} €</span>
           </div>
         `,
@@ -960,6 +962,23 @@ export default function StationMapView({
               >
                 {selectedStation.name}
               </h4>
+              {selectedStation.isOpen === false && (
+                <span
+                  style={{
+                    fontSize: '0.62rem',
+                    fontWeight: 700,
+                    color: '#DC2626',
+                    background: '#FEF2F2',
+                    border: '1px solid #FECACA',
+                    padding: '0.1rem 0.38rem',
+                    borderRadius: '4px',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  Geschlossen
+                </span>
+              )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>

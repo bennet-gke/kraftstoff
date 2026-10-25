@@ -554,7 +554,27 @@ class DataService {
           stationList = data.stations.map((s, idx) => {
             const rawPrice = s[fuelType];
             const hasExactLivePrice = typeof rawPrice === 'number' && rawPrice > 0.5 && Math.abs(rawPrice - 1.009) > 0.005;
-            const currentLivePrice = hasExactLivePrice ? rawPrice : calculateRealisticPriceForRealStation(s, fuelType);
+
+            // Wenn die Station geöffnet ist, aber diese Kraftstoffsorte gar nicht anbietet, nicht anzeigen!
+            if (s.isOpen !== false && !hasExactLivePrice) {
+              return null;
+            }
+
+            let currentLivePrice = hasExactLivePrice ? rawPrice : null;
+            if (!currentLivePrice) {
+              try {
+                const stored = localStorage.getItem(`kraftstoff_real_readings_${s.id}_${fuelType}`);
+                if (stored) {
+                  const readings = JSON.parse(stored);
+                  if (Array.isArray(readings) && readings.length > 0) {
+                    currentLivePrice = readings[readings.length - 1].price;
+                  }
+                }
+              } catch {}
+            }
+            if (!currentLivePrice) {
+              currentLivePrice = calculateRealisticPriceForRealStation(s, fuelType);
+            }
 
             // Speichere die echte Messung ab
             if (hasExactLivePrice) {
@@ -578,7 +598,7 @@ class DataService {
               livePrice: currentLivePrice,
               isExactLivePrice: hasExactLivePrice,
             };
-          });
+          }).filter(Boolean);
 
           // Speichere reale Stationen im Cache für Offline-Resilienz
           try {
@@ -655,7 +675,27 @@ class DataService {
 
               const rawPrice = s[fuelType];
               const hasExactLivePrice = typeof rawPrice === 'number' && rawPrice > 0.5 && Math.abs(rawPrice - 1.009) > 0.005;
-              const currentLivePrice = hasExactLivePrice ? rawPrice : calculateRealisticPriceForRealStation(s, fuelType);
+
+              // Wenn die Station geöffnet ist, aber diese Kraftstoffsorte nicht führt, nicht ansteuern!
+              if (s.isOpen !== false && !hasExactLivePrice) {
+                return;
+              }
+
+              let currentLivePrice = hasExactLivePrice ? rawPrice : null;
+              if (!currentLivePrice) {
+                try {
+                  const stored = localStorage.getItem(`kraftstoff_real_readings_${s.id}_${fuelType}`);
+                  if (stored) {
+                    const readings = JSON.parse(stored);
+                    if (Array.isArray(readings) && readings.length > 0) {
+                      currentLivePrice = readings[readings.length - 1].price;
+                    }
+                  }
+                } catch {}
+              }
+              if (!currentLivePrice) {
+                currentLivePrice = calculateRealisticPriceForRealStation(s, fuelType);
+              }
 
               if (hasExactLivePrice) {
                 this.recordRealPriceReading(s.id, fuelType, currentLivePrice, s.isOpen !== false);

@@ -1134,6 +1134,7 @@ export default function App() {
               activeRoute={activeRoute}
               routes={routes}
               onSelectRoute={handleSelectRoute}
+              onUpdateRouteCorridorRadius={handleUpdateRouteCorridorRadius}
               filterMode={filterMode}
               onSelectFilterMode={handleSelectFilterMode}
               favoriteStationIds={favoriteStationIds}
