@@ -12,6 +12,7 @@ import {
   RefreshCw,
   ChevronRight,
   Cloud,
+  Star,
 } from 'lucide-react';
 
 import { dataService } from './services/dataService';
@@ -63,6 +64,10 @@ export default function App() {
   const [routes, setRoutes] = useState(routeService.routes);
   const [activeRouteId, setActiveRouteId] = useState(routeService.activeRouteId);
 
+  // Favoriten Zustand & 3-Wege-Filter (Ort | Route | Favoriten)
+  const [favoriteStationIds, setFavoriteStationIds] = useState(() => dataService.getFavoriteStationIds());
+  const [filterMode, setFilterMode] = useState(() => (routeService.activeRouteId ? 'route' : 'location'));
+
   // Fahrt-Option & Fahrzeug-Overrides
   const [detourMode, setDetourMode] = useState(routeService.activeRouteId ? 'route_corridor' : 'local_roundtrip');
   const [customConsumption, setCustomConsumption] = useState(null);
@@ -73,6 +78,27 @@ export default function App() {
       setDetourMode('route_corridor');
     }
   }, [activeRouteId]);
+
+  const handleToggleFavorite = (stationId) => {
+    const updated = dataService.toggleFavoriteStation(stationId);
+    setFavoriteStationIds([...updated]);
+    setStations((prev) =>
+      prev.map((s) => (s.id === stationId ? { ...s, isFavorite: updated.includes(s.id) } : s))
+    );
+  };
+
+  const handleSelectFilterMode = (mode) => {
+    setFilterMode(mode);
+    if (mode === 'route') {
+      if (!activeRouteId && routes.length > 0) {
+        handleSelectRoute(routes[0].id);
+      }
+    } else if (mode === 'location') {
+      setActiveRouteId(null);
+      routeService.setActiveRouteId(null);
+      setDetourMode('local_roundtrip');
+    }
+  };
 
   // Modals
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
@@ -213,6 +239,7 @@ export default function App() {
     setActiveRouteId(id);
     routeService.setActiveRouteId(id);
     if (id) {
+      setFilterMode('route');
       setDetourMode('route_corridor');
       const targetRoute = routes.find((r) => r.id === id);
       if (targetRoute) {
@@ -222,12 +249,14 @@ export default function App() {
         }
       }
     } else {
+      setFilterMode('location');
       setDetourMode('local_roundtrip');
     }
   };
 
   // Standort- und Radius-Wechsler (deaktiviert automatisch Routen-Modus)
   const handleSelectLocation = (id, locObj = null) => {
+    setFilterMode('location');
     setActiveRouteId(null);
     routeService.setActiveRouteId(null);
     setDetourMode('local_roundtrip');
@@ -299,13 +328,16 @@ export default function App() {
     return locationService.filterStationsByRadius(stations, activeLocation);
   }, [stations, activeLocation]);
 
-  // 2. Stationen filtern, falls eine Route aktiv ist
+  // 2. Stationen filtern nach Modus: 'favorites' | 'route' | 'location'
   const routeFilteredStations = useMemo(() => {
-    if (activeRoute) {
+    if (filterMode === 'favorites') {
+      return stations.filter((s) => favoriteStationIds.includes(s.id));
+    }
+    if (filterMode === 'route' && activeRoute) {
       return routeService.filterStationsByRoute(localizedStations, activeRoute);
     }
     return localizedStations;
-  }, [localizedStations, activeRoute]);
+  }, [filterMode, stations, localizedStations, activeRoute, favoriteStationIds]);
 
   // 3. Basistankstelle finden (die nächste zum Standort)
   const baseStation = useMemo(() => {
@@ -596,6 +628,10 @@ export default function App() {
             activeRoute={activeRoute}
             routes={routes}
             onSelectRoute={handleSelectRoute}
+            filterMode={filterMode}
+            onSelectFilterMode={handleSelectFilterMode}
+            favoriteStationIds={favoriteStationIds}
+            onToggleFavorite={handleToggleFavorite}
             onOpenLocationRouteModal={() => setIsLocRouteModalOpen(true)}
             onLocateGps={handleLocateGps}
             onSelectQuickCity={handleSelectQuickCity}
@@ -689,10 +725,23 @@ export default function App() {
                 padding: '0 0.2rem',
               }}
             >
-              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0F172A' }}>
-                {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                {filterMode === 'favorites' ? (
+                  <>
+                    <Star size={13} fill="#F59E0B" color="#F59E0B" />
+                    <span>{sortedStations.length} Favorisierte {sortedStations.length === 1 ? 'Tankstelle' : 'Tankstellen'}</span>
+                  </>
+                ) : filterMode === 'route' ? (
+                  <>
+                    <span>{sortedStations.length} Tankstellen an der Route ({activeRoute?.name || 'Fahrt'})</span>
+                  </>
+                ) : (
+                  <span>
+                    {sortedStations.length} Tankstellen im Radius ({Number(activeLocation?.radiusKm || 5)} km um {activeLocation?.name || 'Mein Standort'})
+                  </span>
+                )}
                 {baseStation && (
-                  <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.4rem' }}>
+                  <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '0.2rem' }}>
                     • Basis: <strong>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono">{Number(baseStation?.currentPrice || 1.699).toFixed(3)} €</span>)
                   </span>
                 )}
@@ -710,6 +759,49 @@ export default function App() {
               </button>
             </div>
 
+            {/* Empty State bei leerer Favoritenliste */}
+            {filterMode === 'favorites' && sortedStations.length === 0 && (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '2.5rem 1.25rem',
+                  background: '#FFFFFF',
+                  borderRadius: '16px',
+                  border: '1.5px dashed #CBD5E1',
+                  margin: '1rem 0',
+                }}
+              >
+                <div
+                  style={{
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '50%',
+                    background: '#FFFBEB',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 0.75rem',
+                  }}
+                >
+                  <Star size={22} fill="#F59E0B" color="#F59E0B" />
+                </div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.35rem' }}>
+                  Noch keine Favoriten markiert
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: '#64748B', maxWidth: '340px', margin: '0 auto 1.2rem', lineHeight: 1.45 }}>
+                  Tippe auf den Stern ⭐ bei einer beliebigen Tankstelle, um sie zu deinen Favoriten hinzuzufügen.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleSelectFilterMode('location')}
+                  style={{ borderRadius: '9999px', padding: '0.35rem 0.9rem', fontSize: '0.78rem' }}
+                >
+                  📍 Zu allen Tankstellen im Umkreis
+                </button>
+              </div>
+            )}
+
             {/* Grid aller Stationen */}
             <div className="station-cards-grid">
               {sortedStations.map((st) => (
@@ -724,6 +816,8 @@ export default function App() {
                   detourMode={detourMode}
                   customConsumption={customConsumption}
                   customLiters={customLiters}
+                  isFavorite={favoriteStationIds.includes(st.id)}
+                  onToggleFavorite={handleToggleFavorite}
                   onSelect={() => setSelectedStationForDetail(st)}
                 />
               ))}
@@ -745,6 +839,10 @@ export default function App() {
               activeRoute={activeRoute}
               routes={routes}
               onSelectRoute={handleSelectRoute}
+              filterMode={filterMode}
+              onSelectFilterMode={handleSelectFilterMode}
+              favoriteStationIds={favoriteStationIds}
+              onToggleFavorite={handleToggleFavorite}
               activeVehicle={activeVehicle}
               vehicles={vehicles}
               onSelectVehicle={handleSelectVehicle}
@@ -864,6 +962,8 @@ export default function App() {
           mlPrediction={selectedStationForDetail.mlPrediction}
           fuelType={selectedFuel}
           defaultDetourMode={detourMode}
+          isFavorite={favoriteStationIds.includes(selectedStationForDetail.id)}
+          onToggleFavorite={handleToggleFavorite}
           onClose={() => setSelectedStationForDetail(null)}
         />
       )}

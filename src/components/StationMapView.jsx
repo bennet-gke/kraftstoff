@@ -17,6 +17,7 @@ import {
   TrendingUp,
   Car,
   Layers,
+  Star,
 } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { QUICK_CITIES } from '../services/locationService';
@@ -57,6 +58,10 @@ export default function StationMapView({
   activeRoute,
   routes = [],
   onSelectRoute,
+  filterMode = 'location',
+  onSelectFilterMode,
+  favoriteStationIds = [],
+  onToggleFavorite,
   activeVehicle,
   vehicles = [],
   onSelectVehicle,
@@ -71,12 +76,12 @@ export default function StationMapView({
   const layerGroupRef = useRef(null);
   const tileLayerRef = useRef(null);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState(true);
-  const [mapMode, setMapMode] = useState(() => (activeRoute ? 'route' : 'location'));
+  const [mapMode, setMapMode] = useState(() => filterMode || (activeRoute ? 'route' : 'location'));
 
-  // Halte mapMode synchron mit activeRoute
+  // Halte mapMode synchron mit filterMode
   useEffect(() => {
-    setMapMode(activeRoute ? 'route' : 'location');
-  }, [activeRoute]);
+    setMapMode(filterMode || (activeRoute ? 'route' : 'location'));
+  }, [filterMode, activeRoute]);
 
   const [mapProvider, setMapProvider] = useState(() => {
     try {
@@ -251,11 +256,12 @@ export default function StationMapView({
     stations.forEach((st) => {
       const isCheap = st.evaluation?.isCheap;
       const isSelected = selectedStation?.id === st.id;
+      const isFavorite = favoriteStationIds.includes(st.id) || st.isFavorite;
       const priceStr = st.currentPrice ? st.currentPrice.toFixed(3) : '1.699';
 
       const chipBg = isSelected ? '#0F172A' : isCheap ? '#059669' : '#FFFFFF';
       const chipColor = isSelected || isCheap ? '#FFFFFF' : '#0F172A';
-      const chipBorder = isSelected ? '#38BDF8' : '#FFFFFF';
+      const chipBorder = isSelected ? '#38BDF8' : isFavorite ? '#F59E0B' : '#FFFFFF';
 
       const customIcon = L.divIcon({
         className: 'station-price-chip-wrap',
@@ -278,7 +284,7 @@ export default function StationMapView({
             transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
             transform: translate(-50%, -50%) ${isSelected ? 'scale(1.18)' : 'scale(1)'};
           ">
-            <span style="font-size: 9.5px; opacity: 0.9; text-transform: uppercase;">${st.brand || 'Frei'}</span>
+            <span style="font-size: 9.5px; opacity: 0.9; text-transform: uppercase;">${isFavorite ? '⭐ ' : ''}${st.brand || 'Frei'}</span>
             <span style="font-family: var(--font-mono, monospace); font-size: 12px; font-weight: 800;">${priceStr} €</span>
           </div>
         `,
@@ -293,7 +299,15 @@ export default function StationMapView({
       });
     });
 
-  }, [stations, activeLocation, activeRoute, activeVehicle, selectedStation, onSelectStation]);
+    // Falls Favoriten-Filter aktiv: zentriere Karte auf Favoriten
+    if (filterMode === 'favorites' && stations.length > 0) {
+      try {
+        const bounds = L.latLngBounds(stations.map((s) => [s.lat, s.lng]));
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+      } catch {}
+    }
+
+  }, [stations, activeLocation, activeRoute, activeVehicle, selectedStation, onSelectStation, favoriteStationIds, filterMode]);
 
   // Maps Navigation starten (Apple Maps auf iOS oder Google Maps)
   const openNavigation = (st) => {
@@ -343,6 +357,8 @@ export default function StationMapView({
                 type="button"
                 onClick={() => {
                   setMapMode('location');
+                  setMapMode('location');
+                  if (onSelectFilterMode) onSelectFilterMode('location');
                   if (onSelectRoute) onSelectRoute(null);
                 }}
                 style={{
@@ -367,6 +383,7 @@ export default function StationMapView({
                 type="button"
                 onClick={() => {
                   setMapMode('route');
+                  if (onSelectFilterMode) onSelectFilterMode('route');
                   if (routes.length > 0 && (!activeRoute || !routes.some((r) => r.id === activeRoute.id))) {
                     if (onSelectRoute) onSelectRoute(routes[0].id);
                   }
@@ -388,6 +405,30 @@ export default function StationMapView({
               >
                 <Navigation size={11} />
                 <span>Route</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMapMode('favorites');
+                  if (onSelectFilterMode) onSelectFilterMode('favorites');
+                }}
+                style={{
+                  border: 'none',
+                  background: mapMode === 'favorites' ? '#0F172A' : 'transparent',
+                  color: mapMode === 'favorites' ? '#FFFFFF' : '#64748B',
+                  borderRadius: '6px',
+                  padding: '0.18rem 0.42rem',
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.2rem',
+                }}
+                title="Favoriten-Modus"
+              >
+                <Star size={11} fill={mapMode === 'favorites' ? '#F59E0B' : 'none'} color={mapMode === 'favorites' ? '#F59E0B' : '#64748B'} />
+                <span>Favoriten ({favoriteStationIds.length})</span>
               </button>
             </div>
 
@@ -424,7 +465,7 @@ export default function StationMapView({
                   </option>
                 ))}
               </select>
-            ) : (
+            ) : mapMode === 'route' ? (
               <select
                 value={activeRoute?.id || (routes[0]?.id || '')}
                 onChange={(e) => onSelectRoute && onSelectRoute(e.target.value)}
@@ -451,6 +492,36 @@ export default function StationMapView({
                     </option>
                   ))
                 )}
+              </select>
+            ) : (
+              <select
+                value={selectedStation?.id || ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    const target = stations.find((s) => s.id === e.target.value);
+                    if (target && onSelectStation) onSelectStation(target);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  maxWidth: '160px',
+                  padding: '0.24rem 0.4rem',
+                  borderRadius: '8px',
+                  border: '1.5px solid #FDE68A',
+                  fontWeight: 700,
+                  fontSize: '0.74rem',
+                  color: '#92400E',
+                  background: '#FFFBEB',
+                  cursor: 'pointer',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                <option value="">⭐ Alle Favoriten ({favoriteStationIds.length})</option>
+                {stations.filter((s) => favoriteStationIds.includes(s.id)).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    ⭐ {s.name} ({s.currentPrice ? s.currentPrice.toFixed(3) : ''} €)
+                  </option>
+                ))}
               </select>
             )}
           </div>
@@ -776,6 +847,32 @@ export default function StationMapView({
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+              {(() => {
+                const isSelectedFav = favoriteStationIds.includes(selectedStation.id) || selectedStation.isFavorite;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onToggleFavorite && onToggleFavorite(selectedStation.id)}
+                    style={{
+                      border: 'none',
+                      background: isSelectedFav ? '#FEF3C7' : '#F1F5F9',
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      color: isSelectedFav ? '#F59E0B' : '#94A3B8',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={isSelectedFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}
+                  >
+                    <Star size={13} fill={isSelectedFav ? '#F59E0B' : 'none'} color={isSelectedFav ? '#F59E0B' : '#94A3B8'} />
+                  </button>
+                );
+              })()}
+
               <div style={{ textAlign: 'right' }}>
                 <span className="num-mono" style={{ fontSize: '1.35rem', fontWeight: 800, color: selectedStation.evaluation?.isCheap ? '#059669' : '#0F172A', lineHeight: 1 }}>
                   {selectedStation.currentPrice ? selectedStation.currentPrice.toFixed(3) : '1.699'}
@@ -824,26 +921,48 @@ export default function StationMapView({
           </div>
 
           {/* Quick Actions */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginTop: '0.1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.45rem', marginTop: '0.1rem' }}>
             <button
               type="button"
               className="btn btn-primary btn-sm"
               onClick={() => openNavigation(selectedStation)}
-              style={{ borderRadius: '9999px', fontSize: '0.76rem', padding: '0.45rem' }}
+              style={{ borderRadius: '9999px', fontSize: '0.74rem', padding: '0.42rem 0.2rem', justifyContent: 'center' }}
             >
-              <Navigation size={13} />
-              <span>Route starten</span>
+              <Navigation size={12} />
+              <span>Route</span>
             </button>
+            {(() => {
+              const isSelectedFav = favoriteStationIds.includes(selectedStation.id) || selectedStation.isFavorite;
+              return (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => onToggleFavorite && onToggleFavorite(selectedStation.id)}
+                  style={{
+                    borderRadius: '9999px',
+                    fontSize: '0.74rem',
+                    padding: '0.42rem 0.2rem',
+                    justifyContent: 'center',
+                    background: isSelectedFav ? '#FFFBEB' : '#FFFFFF',
+                    borderColor: isSelectedFav ? '#FDE68A' : undefined,
+                    color: isSelectedFav ? '#B45309' : undefined,
+                  }}
+                >
+                  <Star size={12} fill={isSelectedFav ? '#F59E0B' : 'none'} color={isSelectedFav ? '#F59E0B' : '#64748B'} />
+                  <span>{isSelectedFav ? 'Favorit' : 'Merken'}</span>
+                </button>
+              );
+            })()}
             <button
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => {
                 if (onSelectStation) onSelectStation(selectedStation);
               }}
-              style={{ borderRadius: '9999px', fontSize: '0.76rem', padding: '0.45rem' }}
+              style={{ borderRadius: '9999px', fontSize: '0.74rem', padding: '0.42rem 0.2rem', justifyContent: 'center' }}
             >
-              <Sparkles size={13} color="#059669" />
-              <span>KI-Details</span>
+              <Sparkles size={12} color="#059669" />
+              <span>Details</span>
             </button>
           </div>
         </div>

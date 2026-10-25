@@ -12,6 +12,7 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
+  Star,
 } from 'lucide-react';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
@@ -26,6 +27,8 @@ export default function StationCard({
   detourMode = 'local_roundtrip',
   customConsumption = null,
   customLiters = null,
+  isFavorite = false,
+  onToggleFavorite,
   isSelected = false,
   onSelect,
 }) {
@@ -136,6 +139,32 @@ export default function StationCard({
             >
               {station.name}
             </h4>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onToggleFavorite) onToggleFavorite(station.id);
+              }}
+              title={isFavorite ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}
+              style={{
+                border: 'none',
+                background: isFavorite ? '#FEF3C7' : 'transparent',
+                borderRadius: '50%',
+                width: '26px',
+                height: '26px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: isFavorite ? '#F59E0B' : '#94A3B8',
+                transition: 'all 0.15s ease',
+                flexShrink: 0,
+                padding: 0,
+              }}
+            >
+              <Star size={14} fill={isFavorite ? '#F59E0B' : 'none'} color={isFavorite ? '#F59E0B' : '#94A3B8'} />
+            </button>
 
             {station.isOnRouteCorridor && (
               <span

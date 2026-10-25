@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap } from 'lucide-react';
+import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap, Star } from 'lucide-react';
 import PriceTrendChart from './PriceTrendChart';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
 import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
@@ -12,6 +12,8 @@ export default function StationDetailModal({
   mlPrediction,
   fuelType = 'diesel',
   defaultDetourMode = 'local_roundtrip',
+  isFavorite = false,
+  onToggleFavorite,
   onClose,
 }) {
   // Interaktive Rechner-Parameter im Modal
@@ -101,7 +103,28 @@ export default function StationDetailModal({
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <button
+              type="button"
+              onClick={() => onToggleFavorite && onToggleFavorite(station.id)}
+              style={{
+                background: isFavorite ? '#FEF3C7' : '#F8FAFC',
+                border: isFavorite ? '1px solid #FDE68A' : '1px solid #E2E8F0',
+                color: isFavorite ? '#92400E' : '#334155',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                borderRadius: '8px',
+                fontWeight: 700,
+                fontSize: '0.76rem',
+                padding: '0.35rem 0.65rem',
+                cursor: 'pointer',
+              }}
+              title={isFavorite ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}
+            >
+              <Star size={13} fill={isFavorite ? '#F59E0B' : 'none'} color={isFavorite ? '#F59E0B' : '#64748B'} />
+              <span>{isFavorite ? 'Favorit' : 'Merken'}</span>
+            </button>
             <button className="btn btn-sm btn-primary" onClick={openNavigation}>
               <Navigation size={13} />
               <span>Navigation</span>

@@ -13,6 +13,7 @@ import {
   Check,
   ArrowUpDown,
   Plus,
+  Star,
 } from 'lucide-react';
 import { QUICK_CITIES } from '../services/locationService';
 
@@ -38,6 +39,10 @@ export default function RouteScheduleBar({
   activeRoute = null,
   routes = [],
   onSelectRoute,
+  filterMode = 'location',
+  onSelectFilterMode,
+  favoriteStationIds = [],
+  onToggleFavorite,
   onOpenLocationRouteModal,
   onLocateGps,
   onSelectQuickCity,
@@ -52,15 +57,15 @@ export default function RouteScheduleBar({
   const [timeLeft, setTimeLeft] = useState('');
   // 'location' | 'vehicle' | 'fuel' | 'sort' | null
   const [activeDrawer, setActiveDrawer] = useState(null);
-  // 'location' | 'route' inside the location drawer
-  const [locationSubTab, setLocationSubTab] = useState(() => (activeRoute ? 'route' : 'location'));
+  // 'location' | 'route' | 'favorites' inside the location drawer
+  const [locationSubTab, setLocationSubTab] = useState(() => filterMode || (activeRoute ? 'route' : 'location'));
 
-  // Synchronisiere SubTab mit aktivem Zustand, wenn Drawer geöffnet wird
+  // Synchronisiere SubTab mit aktivem Filtermodus, wenn Drawer geöffnet wird
   useEffect(() => {
     if (activeDrawer === 'location') {
-      setLocationSubTab(activeRoute ? 'route' : 'location');
+      setLocationSubTab(filterMode || (activeRoute ? 'route' : 'location'));
     }
-  }, [activeDrawer, activeRoute]);
+  }, [activeDrawer, filterMode, activeRoute]);
 
   // Live-Countdown für "30 Min pausieren"
   useEffect(() => {
@@ -123,24 +128,36 @@ export default function RouteScheduleBar({
       {/* 1. HORIZONTALE FILTER-PILL-LEISTE (Mobil-optimiert, Swipeable) */}
       <div className="filter-pill-bar">
         
-        {/* Pill 1: Ort ODER Route */}
+        {/* Pill 1: Ort, Route ODER Favoriten */}
         <button
           type="button"
           className={`filter-pill ${activeDrawer === 'location' ? 'active' : ''}`}
           onClick={() => toggleDrawer('location')}
-          title={activeRoute ? `Aktive Route: ${activeRoute.name}` : `Aktiver Standort: ${activeLocation?.name || 'Ort'}`}
+          title="Filter nach Ort, Route oder Favoriten wählen"
           style={{
-            borderColor: activeRoute && activeDrawer !== 'location' ? '#93C5FD' : undefined,
-            background: activeRoute && activeDrawer !== 'location' ? '#EFF6FF' : undefined,
+            borderColor: filterMode === 'favorites' && activeDrawer !== 'location'
+              ? '#FDE68A'
+              : filterMode === 'route' && activeDrawer !== 'location'
+              ? '#93C5FD'
+              : undefined,
+            background: filterMode === 'favorites' && activeDrawer !== 'location'
+              ? '#FFFBEB'
+              : filterMode === 'route' && activeDrawer !== 'location'
+              ? '#EFF6FF'
+              : undefined,
           }}
         >
-          {activeRoute ? (
+          {filterMode === 'favorites' ? (
+            <Star size={13} fill={activeDrawer === 'location' ? '#FFFFFF' : '#F59E0B'} color={activeDrawer === 'location' ? '#FFFFFF' : '#F59E0B'} />
+          ) : filterMode === 'route' && activeRoute ? (
             <Navigation size={13} color={activeDrawer === 'location' ? '#FFFFFF' : '#2563EB'} />
           ) : (
             <MapPin size={13} color={activeDrawer === 'location' ? '#FFFFFF' : '#0F172A'} />
           )}
           <span>
-            {activeRoute ? (
+            {filterMode === 'favorites' ? (
+              <>Favoriten (<strong>{favoriteStationIds.length}</strong>)</>
+            ) : filterMode === 'route' && activeRoute ? (
               <>Route: <strong>{activeRoute.name}</strong></>
             ) : (
               <>{activeLocation?.name || 'Ort'} ({Number(activeLocation?.radiusKm || 5)} km)</>
@@ -273,7 +290,10 @@ export default function RouteScheduleBar({
                 >
                   <button
                     type="button"
-                    onClick={() => setLocationSubTab('location')}
+                    onClick={() => {
+                      setLocationSubTab('location');
+                      if (onSelectFilterMode) onSelectFilterMode('location');
+                    }}
                     style={{
                       border: 'none',
                       background: locationSubTab === 'location' ? '#0F172A' : 'transparent',
@@ -295,7 +315,10 @@ export default function RouteScheduleBar({
 
                   <button
                     type="button"
-                    onClick={() => setLocationSubTab('route')}
+                    onClick={() => {
+                      setLocationSubTab('route');
+                      if (onSelectFilterMode) onSelectFilterMode('route');
+                    }}
                     style={{
                       border: 'none',
                       background: locationSubTab === 'route' ? '#0F172A' : 'transparent',
@@ -313,6 +336,31 @@ export default function RouteScheduleBar({
                   >
                     <Navigation size={13} />
                     <span>Fahrt-Route {routes.length > 0 && `(${routes.length})`}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocationSubTab('favorites');
+                      if (onSelectFilterMode) onSelectFilterMode('favorites');
+                    }}
+                    style={{
+                      border: 'none',
+                      background: locationSubTab === 'favorites' ? '#0F172A' : 'transparent',
+                      color: locationSubTab === 'favorites' ? '#FFFFFF' : '#475569',
+                      borderRadius: '8px',
+                      padding: '0.35rem 0.8rem',
+                      fontSize: '0.76rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Star size={13} fill={locationSubTab === 'favorites' ? '#F59E0B' : 'none'} color={locationSubTab === 'favorites' ? '#F59E0B' : '#475569'} />
+                    <span>Favoriten ({favoriteStationIds.length})</span>
                   </button>
                 </div>
 
@@ -626,6 +674,75 @@ export default function RouteScheduleBar({
                     <Plus size={13} />
                     <span>Neue Route anlegen / Routen verwalten...</span>
                   </button>
+                </div>
+              )}
+
+              {/* UNTER-TAB C: FAVORITEN */}
+              {locationSubTab === 'favorites' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div
+                    style={{
+                      background: '#FFFBEB',
+                      border: '1px solid #FDE68A',
+                      borderRadius: '10px',
+                      padding: '0.85rem 1rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '36px',
+                        height: '36px',
+                        borderRadius: '50%',
+                        background: '#FEF3C7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Star size={18} fill="#F59E0B" color="#F59E0B" />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#92400E' }}>
+                        Favoriten-Filter aktiv
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: '#B45309', marginTop: '2px', lineHeight: 1.4 }}>
+                        {favoriteStationIds.length > 0
+                          ? `Es werden nur deine ${favoriteStationIds.length} favorisierten Tankstellen auf der Karte und im Radar angezeigt.`
+                          : 'Du hast noch keine Tankstellen mit dem Stern ⭐ markiert.'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => {
+                        if (onSelectFilterMode) onSelectFilterMode('favorites');
+                        setActiveDrawer(null);
+                      }}
+                      style={{ flex: 1, borderRadius: '8px', fontSize: '0.76rem' }}
+                    >
+                      <span>Favoriten anzeigen</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        if (onSelectFilterMode) onSelectFilterMode('location');
+                        setLocationSubTab('location');
+                        setActiveDrawer(null);
+                      }}
+                      style={{ borderRadius: '8px', fontSize: '0.76rem' }}
+                    >
+                      <span>Zu Ort-Radius wechseln</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -124,7 +124,47 @@ function icloudSyncPlugin() {
   }
 }
 
+function tankerkoenigPlugin() {
+  return {
+    name: 'tankerkoenig-plugin',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const urlStr = req.url || '';
+        if (!urlStr.startsWith('/api/tankerkoenig')) {
+          return next();
+        }
+
+        const parsedUrl = new URL(urlStr, `http://${req.headers.host || 'localhost'}`);
+        const lat = parsedUrl.searchParams.get('lat');
+        const lng = parsedUrl.searchParams.get('lng');
+        const rad = parsedUrl.searchParams.get('rad') || '5';
+        const type = parsedUrl.searchParams.get('type') || 'all';
+        const apikey = (parsedUrl.searchParams.get('apikey') || process.env.VITE_TANKERKOENIG_KEY || '00000000-0000-0000-0000-000000000002').trim();
+
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+
+        if (!lat || !lng) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, message: 'lat und lng erforderlich' }));
+          return;
+        }
+
+        try {
+          const targetUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lng}&rad=${rad}&sort=dist&type=${type}&apikey=${apikey}`;
+          const response = await fetch(targetUrl);
+          const data = await response.json();
+          res.end(JSON.stringify(data));
+        } catch (e) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), icloudSyncPlugin()],
-})
+  plugins: [react(), icloudSyncPlugin(), tankerkoenigPlugin()],
+});
