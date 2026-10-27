@@ -1,10 +1,44 @@
 import React from 'react';
-import { AlertTriangle, RefreshCw, RotateCcw, Home } from 'lucide-react';
+import { AlertTriangle, RefreshCw, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react';
+
+// Bewusst ohne Import aus den Diensten: die Fehlerseite muss auch funktionieren, wenn genau dort der Fehler liegt
+const SAFE_MODE_KEY = 'kraftstoff_safe_mode';
+const IDB_NAMES = ['kraftstoff_persistent_storage', 'tensorflowjs'];
+
+function deleteDb(name) {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/** Löscht alles, was die App auf diesem Gerät gespeichert hat (die Dateien im iCloud-Ordner bleiben unberührt). */
+async function resetAllLocalData() {
+  try { localStorage.clear(); } catch {}
+  try { sessionStorage.clear(); } catch {}
+  await Promise.all(IDB_NAMES.map(deleteDb));
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {}
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch {}
+}
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null, errorInfo: null };
+    this.state = { hasError: false, error: null, confirmReset: false, resetting: false };
   }
 
   static getDerivedStateFromError(error) {
@@ -12,135 +46,77 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('KRAFTSTOFF ErrorBoundary caught error:', error, errorInfo);
-    this.setState({ errorInfo });
+    console.error('KRAFTSTOFF: Darstellungsfehler', error, errorInfo);
   }
+
+  handleSafeMode = () => {
+    try { localStorage.setItem(SAFE_MODE_KEY, '1'); } catch {}
+    window.location.reload();
+  };
 
   handleResetLocations = () => {
     try {
-      localStorage.removeItem('kraftstoff_user_locations');
-      localStorage.removeItem('kraftstoff_active_location_id');
-      localStorage.removeItem('kraftstoff_user_routes');
-      localStorage.removeItem('kraftstoff_active_route_id');
+      ['kraftstoff_user_locations', 'kraftstoff_active_location_id', 'kraftstoff_user_routes', 'kraftstoff_active_route_id'].forEach((k) => localStorage.removeItem(k));
     } catch {}
     window.location.reload();
   };
 
-  handleFullReset = () => {
-    try {
-      localStorage.clear();
-    } catch {}
-    window.location.reload();
+  handleFullReset = async () => {
+    this.setState({ resetting: true });
+    await resetAllLocalData();
+    window.location.replace('/');
   };
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            minHeight: '100vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: '#F8FAFC',
-            padding: '1.5rem',
-            fontFamily: 'Inter, system-ui, sans-serif',
-          }}
-        >
-          <div
-            style={{
-              maxWidth: '520px',
-              width: '100%',
-              background: '#FFFFFF',
-              border: '1px solid #E2E8F0',
-              borderRadius: '12px',
-              padding: '1.75rem',
-              boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.08)',
-              textAlign: 'center',
-            }}
-          >
-            <div
-              style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                background: '#FEF2F2',
-                color: '#DC2626',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '1rem',
-              }}
-            >
-              <AlertTriangle size={24} />
-            </div>
+    if (!this.state.hasError) return this.props.children;
+    const { error, confirmReset, resetting } = this.state;
 
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', marginBottom: '0.4rem' }}>
-              Ansicht konnte nicht geladen werden
-            </h2>
-            <p style={{ fontSize: '0.82rem', color: '#64748B', lineHeight: 1.5, marginBottom: '1.25rem' }}>
-              Es ist ein Fehler beim Darstellen der Daten aufgetreten. Deine Tankdaten und Einstellungen sind lokal oder in der iCloud gesichert.
-            </p>
+    return (
+      <div className="fatal-screen">
+        <div className="fatal-card">
+          <div className="fatal-icon">
+            <AlertTriangle size={24} />
+          </div>
+          <h2>Da ist etwas schiefgelaufen</h2>
+          <p>Die Ansicht konnte nicht dargestellt werden. Deine Daten sind lokal und in der Datenbank-Datei gesichert.</p>
 
-            {this.state.error && (
-              <div
-                style={{
-                  background: '#F1F5F9',
-                  border: '1px solid #E2E8F0',
-                  borderRadius: '6px',
-                  padding: '0.65rem',
-                  fontSize: '0.72rem',
-                  color: '#475569',
-                  fontFamily: 'monospace',
-                  textAlign: 'left',
-                  maxHeight: '100px',
-                  overflowY: 'auto',
-                  marginBottom: '1.25rem',
-                }}
-              >
-                {this.state.error.toString()}
+          {error && <pre className="fatal-error">{String(error?.message || error)}</pre>}
+
+          <div className="fatal-actions">
+            <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+              <RefreshCw size={14} />
+              <span>Neu laden</span>
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={this.handleSafeMode}>
+              <ShieldCheck size={14} />
+              <span>Ohne automatisches Laden der Datei starten</span>
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={this.handleResetLocations}>
+              <RotateCcw size={14} />
+              <span>Orte & Routen zurücksetzen</span>
+            </button>
+
+            {!confirmReset ? (
+              <button type="button" className="fatal-link" onClick={() => this.setState({ confirmReset: true })}>
+                App auf diesem Gerät komplett zurücksetzen …
+              </button>
+            ) : (
+              <div className="inline-confirm is-block">
+                <span>Löscht alle lokalen Daten dieser App (Einstellungen, Preishistorie, KI-Lernstand, Offline-Speicher). Die Dateien in deinem iCloud-Ordner bleiben erhalten – danach einfach die neueste Datei wieder laden.</span>
+                <div className="inline-confirm-actions">
+                  <button type="button" className="btn btn-sm btn-danger" onClick={this.handleFullReset} disabled={resetting}>
+                    <Trash2 size={13} />
+                    <span>{resetting ? 'Setze zurück …' : 'Ja, zurücksetzen'}</span>
+                  </button>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => this.setState({ confirmReset: false })} disabled={resetting}>
+                    Abbrechen
+                  </button>
+                </div>
               </div>
             )}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              <button
-                onClick={() => window.location.reload()}
-                className="btn btn-primary"
-                style={{ justifyContent: 'center', padding: '0.65rem' }}
-              >
-                <RefreshCw size={14} />
-                <span>Seite neu laden</span>
-              </button>
-
-              <button
-                onClick={this.handleResetLocations}
-                className="btn btn-secondary"
-                style={{ justifyContent: 'center', padding: '0.65rem' }}
-              >
-                <RotateCcw size={14} />
-                <span>Standorte & Routen auf Standard zurücksetzen</span>
-              </button>
-
-              <button
-                onClick={this.handleFullReset}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#94A3B8',
-                  fontSize: '0.74rem',
-                  cursor: 'pointer',
-                  marginTop: '0.5rem',
-                  textDecoration: 'underline',
-                }}
-              >
-                Vollständigen Cache leeren
-              </button>
-            </div>
           </div>
         </div>
-      );
-    }
-
-    return this.props.children;
+      </div>
+    );
   }
 }

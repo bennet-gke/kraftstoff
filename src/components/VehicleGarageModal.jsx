@@ -1,324 +1,279 @@
 import React, { useState } from 'react';
-import { Car, Plus, Trash2, X, Check, Fuel, Gauge, Download } from 'lucide-react';
+import { Car, Plus, Trash2, X, Check, Gauge, Download, Pencil, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { vehicleService } from '../services/vehicleService';
-import { backupService } from '../services/backupService';
+import { backupService, describeSaveResult } from '../services/backupService';
+import { neededLitersFor, rangeKmFor, num } from '../engine/vehicleMath';
+import { fmtNum, fuelLabel } from '../utils/format';
+import { useEscapeToClose } from './modalHooks';
 
-export default function VehicleGarageModal({
-  isOpen,
-  onClose,
-  vehicles = [],
-  activeVehicleId,
-  onSelectActiveVehicle,
-  onUpdateVehicles,
-}) {
-  const [name, setName] = useState('');
-  const [brand, setBrand] = useState('');
-  const [fuelType, setFuelType] = useState('diesel');
-  const [consumption, setConsumption] = useState('5.8');
-  const [tankCapacity, setTankCapacity] = useState('50');
-  const [fuelLevelPct, setFuelLevelPct] = useState('20');
+const FUEL_OPTIONS = [
+  { id: 'diesel', label: 'Diesel' },
+  { id: 'e10', label: 'Super E10' },
+  { id: 'e5', label: 'Super E5' },
+];
+
+/** Eingaben prüfen und in Zahlen umwandeln (Komma erlaubt). */
+function parseVehicleForm(form) {
+  const name = String(form.name || '').trim();
+  const consumption = num(String(form.consumption).replace(',', '.'), NaN);
+  const tank = num(String(form.tank).replace(',', '.'), NaN);
+  if (!name) return { error: 'Bitte einen Namen eingeben.' };
+  if (!Number.isFinite(consumption) || consumption < 2 || consumption > 30) return { error: 'Verbrauch bitte zwischen 2 und 30 L/100 km angeben.' };
+  if (!Number.isFinite(tank) || tank < 10 || tank > 200) return { error: 'Tankgröße bitte zwischen 10 und 200 Litern angeben.' };
+  return {
+    data: {
+      name: name.slice(0, 60),
+      brand: name.split(' ')[0] || 'Auto',
+      fuelType: form.fuelType,
+      consumptionL100km: Math.round(consumption * 10) / 10,
+      tankCapacityL: Math.round(tank),
+    },
+  };
+}
+
+function VehicleForm({ initial, submitLabel, onSubmit, onCancel }) {
+  const [form, setForm] = useState(initial);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    const res = parseVehicleForm(form);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    setError(null);
+    onSubmit(res.data);
+  };
+
+  return (
+    <form className="vehicle-form" onSubmit={submit}>
+      <div className="field">
+        <label className="field-label">Name</label>
+        <input className="text-input" type="text" value={form.name} onChange={set('name')} placeholder="z. B. Skoda Octavia" maxLength={60} autoFocus />
+      </div>
+      <div className="field">
+        <span className="field-label">Kraftstoff</span>
+        <div className="segmented is-wide" role="group" aria-label="Kraftstoff">
+          {FUEL_OPTIONS.map((f) => (
+            <button key={f.id} type="button" className={form.fuelType === f.id ? 'active' : ''} onClick={() => setForm((x) => ({ ...x, fuelType: f.id }))} aria-pressed={form.fuelType === f.id}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label className="field-label">Verbrauch (L/100 km)</label>
+          <input className="text-input" inputMode="decimal" value={form.consumption} onChange={set('consumption')} placeholder="6,0" />
+        </div>
+        <div className="field">
+          <label className="field-label">Tankgröße (L)</label>
+          <input className="text-input" inputMode="numeric" value={form.tank} onChange={set('tank')} placeholder="50" />
+        </div>
+      </div>
+      {error && (
+        <div className="inline-msg is-error" role="alert">
+          <AlertCircle size={14} />
+          <span>{error}</span>
+        </div>
+      )}
+      <div className="drawer-actions">
+        <button type="submit" className="btn btn-primary btn-sm">
+          <Check size={13} />
+          <span>{submitLabel}</span>
+        </button>
+        {onCancel && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>
+            Abbrechen
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Garage: Fahrzeuge anlegen und bearbeiten, Tankstand einstellen (daraus ergeben sich Tankmenge und Reichweite).
+ */
+export default function VehicleGarageModal({ isOpen, onClose, vehicles = [], activeVehicleId, onSelectActiveVehicle, onUpdateVehicles }) {
+  const [editingId, setEditingId] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [autoSyncICloud, setAutoSyncICloud] = useState(true);
-  const [feedbackToast, setFeedbackToast] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [msg, setMsg] = useState(null);
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
-  const handleCreate = (e) => {
-    e.preventDefault();
-    if (!name) return;
-
-    const newV = vehicleService.addVehicle({
-      name,
-      brand,
-      fuelType,
-      consumptionL100km: parseFloat(consumption),
-      tankCapacityL: parseFloat(tankCapacity),
-      currentFuelLevelPct: parseFloat(fuelLevelPct),
-    });
-
+  const handleCreate = (data) => {
+    const newV = vehicleService.addVehicle({ ...data, currentFuelLevelPct: 25 });
     onUpdateVehicles(vehicleService.vehicles);
     onSelectActiveVehicle(newV.id);
-    setName('');
     setIsAdding(false);
+    setMsg({ type: 'success', text: `✓ „${newV.name}“ angelegt und ausgewählt. Stelle jetzt den Tankstand ein.` });
+  };
 
-    if (autoSyncICloud) {
-      setTimeout(async () => {
-        try {
-          const res = await backupService.directSyncToICloud();
-          setFeedbackToast(res.method === 'direct-file' ? '✓ Gespeichert & direkt in iCloud Drive synchronisiert!' : '✓ Fahrzeug erfolgreich gespeichert!');
-        } catch {
-          setFeedbackToast('✓ Fahrzeug lokal gespeichert!');
-        }
-        setTimeout(() => setFeedbackToast(null), 4000);
-      }, 100);
-    } else {
-      setFeedbackToast('✓ Fahrzeug gespeichert!');
-      setTimeout(() => setFeedbackToast(null), 3000);
-    }
+  const handleEdit = (v, data) => {
+    const updated = vehicleService.updateVehicle(v.id, data);
+    onUpdateVehicles(updated);
+    setEditingId(null);
+    // Kraftstoff des aktiven Fahrzeugs geändert: Radar auf die neue Sorte umstellen
+    if (v.id === activeVehicleId && data.fuelType !== v.fuelType) onSelectActiveVehicle(v.id);
   };
 
   const handleDelete = (id) => {
     const updated = vehicleService.deleteVehicle(id);
     onUpdateVehicles(updated);
-    if (autoSyncICloud) {
-      setTimeout(() => backupService.directSyncToICloud(), 100);
-    }
+    setConfirmDeleteId(null);
   };
 
-  const handleUpdateFuelLevel = (id, pct) => {
-    const updated = vehicleService.updateVehicle(id, { currentFuelLevelPct: pct });
-    onUpdateVehicles(updated);
+  const handleFuelLevel = (id, pct) => {
+    onUpdateVehicles(vehicleService.updateVehicle(id, { currentFuelLevelPct: pct }));
+  };
+
+  const handleSaveFile = async () => {
+    try {
+      const res = await backupService.saveToDatabase({ explicit: true });
+      setMsg({ type: res.success ? 'success' : 'error', text: describeSaveResult(res) });
+    } catch (e) {
+      setMsg({ type: 'error', text: `Speichern fehlgeschlagen: ${e.message}` });
+    }
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ background: '#0F172A', color: '#FFFFFF', padding: '0.35rem', borderRadius: '6px' }}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Garage">
+        <div className="modal-head">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+            <div className="modal-head-icon">
               <Car size={16} />
             </div>
             <div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
-                Fahrzeug-Garage & Verbrauchsprofile
-              </h3>
-              <p style={{ fontSize: '0.76rem', color: '#64748B' }}>
-                Berechnung der exakten Tankmenge und Umweg-Rentabilität
-              </p>
+              <h3>Garage</h3>
+              <p>Verbrauch und Tankstand bestimmen Tankmenge, Reichweite und Umweg-Rechnung</p>
             </div>
           </div>
-
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Schließen">
             <X size={20} />
           </button>
         </div>
 
-        {/* Fahrzeugliste */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginBottom: '1.25rem' }}>
+        <div className="manage-list">
           {vehicles.map((v) => {
             const isActive = v.id === activeVehicleId;
-            const neededLiters = vehicleService.getNeededLiters(v);
+            const level = Math.min(100, Math.max(0, num(v.currentFuelLevelPct, 20)));
+            const liters = Math.round(neededLitersFor(v));
+            const range = rangeKmFor(v);
+
+            if (editingId === v.id) {
+              return (
+                <div key={v.id} className="manage-item is-active">
+                  <VehicleForm
+                    initial={{ name: v.name, fuelType: v.fuelType || 'diesel', consumption: fmtNum(v.consumptionL100km, 1), tank: String(v.tankCapacityL) }}
+                    submitLabel="Speichern"
+                    onSubmit={(data) => handleEdit(v, data)}
+                    onCancel={() => setEditingId(null)}
+                  />
+                </div>
+              );
+            }
 
             return (
-              <div
-                key={v.id}
-                style={{
-                  border: `1px solid ${isActive ? '#0F172A' : '#E2E8F0'}`,
-                  borderRadius: '10px',
-                  padding: '1rem',
-                  background: isActive ? '#FAFAFA' : '#FFFFFF',
-                  boxShadow: isActive ? '0 2px 6px rgba(15,23,42,0.06)' : 'none',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                      <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0F172A' }}>
-                        {v.name}
-                      </span>
-                      <span className="badge badge-gray" style={{ fontSize: '0.68rem', textTransform: 'uppercase' }}>
-                        {v.fuelType}
-                      </span>
+              <div key={v.id} className={`manage-item ${isActive ? 'is-active' : ''}`}>
+                <div className="manage-item-head">
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="manage-item-title">
+                      <span>{v.name}</span>
+                      <span className="badge badge-gray" style={{ fontSize: '0.64rem', padding: '0.1rem 0.45rem' }}>{fuelLabel(v.fuelType)}</span>
                       {isActive && (
-                        <span className="badge badge-favorable" style={{ fontSize: '0.68rem' }}>
-                          <Check size={10} />
-                          <span>Aktiv</span>
+                        <span className="badge badge-favorable" style={{ fontSize: '0.64rem', padding: '0.1rem 0.45rem' }}>
+                          <Check size={10} /> Aktiv
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: '0.76rem', color: '#64748B', marginTop: '0.2rem' }}>
-                      Verbrauch: <strong>{v.consumptionL100km} L/100km</strong> • Tankgröße: <strong>{v.tankCapacityL} Liter</strong>
+                    <div className="manage-item-sub">
+                      {fmtNum(v.consumptionL100km, 1)} L/100 km • {v.tankCapacityL} L Tank
                     </div>
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <div className="manage-item-actions">
                     {!isActive && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => onSelectActiveVehicle(v.id)}
-                      >
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => onSelectActiveVehicle(v.id)}>
                         Auswählen
                       </button>
                     )}
+                    <button type="button" className="icon-btn" onClick={() => { setEditingId(v.id); setIsAdding(false); }} aria-label={`${v.name} bearbeiten`} title="Bearbeiten">
+                      <Pencil size={14} />
+                    </button>
                     {vehicles.length > 1 && (
-                      <button
-                        onClick={() => handleDelete(v.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.3rem' }}
-                        title="Fahrzeug löschen"
-                      >
+                      <button type="button" className="icon-btn is-danger" onClick={() => setConfirmDeleteId(v.id)} aria-label={`${v.name} löschen`} title="Löschen">
                         <Trash2 size={14} />
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Tankfüllstand-Schieberegler für dieses Fahrzeug */}
-                <div style={{ background: '#F8FAFC', border: '1px solid #F1F5F9', borderRadius: '8px', padding: '0.6rem 0.8rem', marginTop: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem', color: '#475569', marginBottom: '0.3rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <Gauge size={12} color="#0F172A" />
-                      <span>Aktueller Tankstand: <strong>{v.currentFuelLevelPct || 20}%</strong></span>
-                    </div>
-                    <span style={{ color: '#059669', fontWeight: 700 }}>
-                      Benötigte Tankmenge: {neededLiters} L
-                    </span>
+                {confirmDeleteId === v.id && (
+                  <div className="inline-confirm">
+                    <span>„{v.name}“ löschen?</span>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDelete(v.id)}>Löschen</button>
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => setConfirmDeleteId(null)}>Abbrechen</button>
+                  </div>
+                )}
+
+                <div className="fuel-level">
+                  <div className="fuel-level-head">
+                    <span><Gauge size={13} /> Tankstand</span>
+                    <strong className="num-mono">{Math.round(level)} %</strong>
                   </div>
                   <input
                     type="range"
-                    min="5"
-                    max="90"
+                    min="0"
+                    max="100"
                     step="5"
-                    value={v.currentFuelLevelPct || 20}
-                    onChange={(e) => handleUpdateFuelLevel(v.id, parseInt(e.target.value))}
-                    style={{ width: '100%', accentColor: '#0F172A' }}
+                    value={level}
+                    onChange={(e) => handleFuelLevel(v.id, parseInt(e.target.value, 10))}
+                    aria-label={`Tankstand ${v.name}`}
+                    style={{ '--fill': `${level}%` }}
                   />
+                  <div className="fuel-level-figures">
+                    <span>Bis voll: <strong className="num-mono">{liters} L</strong></span>
+                    <span>Reichweite: <strong className="num-mono">~{range} km</strong></span>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Neues Auto anlegen Formular */}
         {isAdding ? (
-          <form onSubmit={handleCreate} style={{ borderTop: '1px solid #F1F5F9', paddingTop: '1rem' }}>
-            <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.75rem' }}>
-              Neues Fahrzeug hinzufügen
-            </h4>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
-              <input
-                type="text"
-                placeholder="Modell (z.B. VW Passat TDI)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                required
-              />
-              <select
-                value={fuelType}
-                onChange={(e) => setFuelType(e.target.value)}
-                style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem', background: '#FFFFFF' }}
-              >
-                <option value="diesel">Diesel</option>
-                <option value="e10">Super E10</option>
-                <option value="e5">Super E5</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginBottom: '0.85rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.15rem' }}>Verbrauch (L/100km):</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={consumption}
-                  onChange={(e) => setConsumption(e.target.value)}
-                  style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                  required
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.15rem' }}>Tankvolumen (L):</label>
-                <input
-                  type="number"
-                  step="1"
-                  value={tankCapacity}
-                  onChange={(e) => setTankCapacity(e.target.value)}
-                  style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                  required
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.15rem' }}>Reststand (%):</label>
-                <input
-                  type="number"
-                  step="5"
-                  min="0"
-                  max="100"
-                  value={fuelLevelPct}
-                  onChange={(e) => setFuelLevelPct(e.target.value)}
-                  style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                  required
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.74rem', color: '#475569', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={autoSyncICloud}
-                  onChange={(e) => setAutoSyncICloud(e.target.checked)}
-                  style={{ accentColor: '#0F172A' }}
-                />
-                <span>Automatisch in iCloud-Datei sichern (kraftstoff_daten.json)</span>
-              </label>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIsAdding(false)}>
-                Abbrechen
-              </button>
-              <button type="submit" className="btn btn-primary btn-sm">
-                Fahrzeug speichern
-              </button>
-            </div>
-          </form>
+          <div className="form-section">
+            <h4>Neues Fahrzeug</h4>
+            <VehicleForm initial={{ name: '', fuelType: 'diesel', consumption: '6,0', tank: '50' }} submitLabel="Fahrzeug anlegen" onSubmit={handleCreate} onCancel={() => setIsAdding(false)} />
+          </div>
         ) : (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => setIsAdding(true)}
-            style={{ width: '100%' }}
-          >
+          <button type="button" className="btn btn-secondary btn-sm drawer-wide-btn" onClick={() => { setIsAdding(true); setEditingId(null); }}>
             <Plus size={14} />
-            <span>Weiteres Fahrzeug anlegen</span>
+            <span>Fahrzeug hinzufügen</span>
           </button>
         )}
 
-        {/* Feedback Toast */}
-        {feedbackToast && (
-          <div
-            style={{
-              marginTop: '0.85rem',
-              padding: '0.55rem 0.85rem',
-              borderRadius: '6px',
-              fontSize: '0.76rem',
-              background: '#ECFDF5',
-              color: '#065F46',
-              border: '1px solid #A7F3D0',
-              fontWeight: 600,
-            }}
-          >
-            {feedbackToast}
+        {msg && (
+          <div className={`inline-msg is-${msg.type}`} style={{ marginTop: '0.75rem' }} role="status">
+            {msg.type === 'error' ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
+            <span>{msg.text}</span>
           </div>
         )}
 
-        {/* iCloud Sync Fußleiste */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #F1F5F9', paddingTop: '0.85rem', marginTop: '1.25rem', fontSize: '0.74rem' }}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={async () => {
-              try {
-                const res = await backupService.directSyncToICloud();
-                alert(res.method === 'direct-file' ? `✓ In iCloud Drive gespeichert (${res.directPath})!` : '✓ Datei "kraftstoff_daten.json" erzeugt!');
-              } catch (e) {
-                alert(`Fehler: ${e.message}`);
-              }
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-          >
+        <div className="modal-foot">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleSaveFile}>
             <Download size={13} color="#059669" />
-            <span>Jetzt in iCloud-Datei sichern</span>
+            <span>Jetzt in Datei sichern</span>
           </button>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-            Schließen
+          <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>
+            Fertig
           </button>
         </div>
-
       </div>
     </div>
   );

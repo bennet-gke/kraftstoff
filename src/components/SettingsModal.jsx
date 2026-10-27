@@ -1,433 +1,265 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, Database, Key, Clock, Check, X, ExternalLink, Info, AlertCircle, CheckCircle2, Cloud } from 'lucide-react';
+import React, { useState } from 'react';
+import { Settings, Key, Clock, Check, X, ExternalLink, AlertCircle, CheckCircle2, Database, Car, Bell, FolderOpen, Navigation, RefreshCw } from 'lucide-react';
 import { dataService } from '../services/dataService';
-import { backupService, FIXED_ICLOUD_PATH } from '../services/backupService';
+import { backupService, describeSaveResult, fmtWhen } from '../services/backupService';
+import { navAppLabel } from '../services/navHandoff';
+import { fmtNum } from '../utils/format';
+import { useEscapeToClose } from './modalHooks';
 
-export default function SettingsModal({
-  isOpen,
-  onClose,
-  settings,
-  onSaveSettings,
-}) {
-  const creds = dataService.getCredentials();
-  const [supabaseUrl, setSupabaseUrl] = useState(creds.supabaseUrl || '');
-  const [supabaseKey, setSupabaseKey] = useState(creds.supabaseKey || '');
-  const [tkKey, setTkKey] = useState(creds.tankerkoenigKey || '');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  const [thresholdCent, setThresholdCent] = useState(settings.alertThresholdCent || 3.0);
+const NAV_OPTIONS = [
+  { id: 'apple', label: 'Apple Karten' },
+  { id: 'google', label: 'Google Maps' },
+];
+
+/**
+ * Einstellungen: Datenbank-Ordner, Tankerkönig-Key, Karten-App, Fahrprofil, Preisalarm.
+ * Wird nur geöffnet gerendert – startet daher immer mit den aktuellen Werten.
+ */
+export default function SettingsModal({ isOpen, onClose, settings, onSaveSettings, dbStatus = null, serverKeyAvailable = false, onOpenDbSetup }) {
+  const storedKey = dataService.getStoredKey();
+  const [tkKey, setTkKey] = useState(storedKey);
+  const [thresholdCent, setThresholdCent] = useState(Number(settings.alertThresholdCent) || 3);
+  const [dailyCommuteKm, setDailyCommuteKm] = useState(Number(settings.dailyCommuteKm) || 30);
   const [commuteMorningStart, setCommuteMorningStart] = useState(settings.commuteMorningStart || '07:30');
   const [commuteMorningEnd, setCommuteMorningEnd] = useState(settings.commuteMorningEnd || '08:45');
   const [commuteEveningStart, setCommuteEveningStart] = useState(settings.commuteEveningStart || '16:30');
   const [commuteEveningEnd, setCommuteEveningEnd] = useState(settings.commuteEveningEnd || '18:45');
-
-  // iCloud Status State
-  const [pathStatus, setPathStatus] = useState(null);
-  const [isTestingPath, setIsTestingPath] = useState(false);
-
-  // Test states
-  const [tkTestState, setTkTestState] = useState({ testing: false, result: null });
-  const [sbTestState, setSbTestState] = useState({ testing: false, result: null });
-
-  const [isSaved, setIsSaved] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      backupService.checkServerStatus().then((status) => {
-        if (status.isAvailable) {
-          setPathStatus(status);
-        }
-      });
-    }
-  }, [isOpen]);
+  const [navApp, setNavApp] = useState(settings.navApp === 'google' ? 'google' : 'apple');
+  const [tkTest, setTkTest] = useState({ testing: false, result: null });
+  const [saveState, setSaveState] = useState(null); // null | 'saving' | 'done' | 'error'
+  const [saveMessage, setSaveMessage] = useState('');
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
-  const handleCheckPath = async () => {
-    setIsTestingPath(true);
-    const status = await backupService.checkServerStatus();
-    setPathStatus(status);
-    setIsTestingPath(false);
-  };
+  const status = dbStatus || backupService.getStatus();
+  const isDirect = (status.mode === 'server' && status.serverAvailable !== false) || (status.mode === 'fs-access' && status.permission === 'granted');
+  const locationText = status.mode === 'server'
+    ? status.dir
+    : status.mode === 'fs-access'
+      ? `Ordner „${status.dir}“ (im Browser freigegeben)`
+      : status.mode === 'manual'
+        ? 'Dein iCloud-Ordner in der Dateien-App'
+        : 'Kein Ordner festgelegt';
+  const trimmedKey = tkKey.trim();
+  const keyChanged = trimmedKey !== storedKey;
+  const keyInvalid = trimmedKey !== '' && !UUID_RE.test(trimmedKey);
 
   const handleTestTk = async () => {
-    setTkTestState({ testing: true, result: null });
-    const res = await dataService.testTankerkoenig(tkKey);
-    setTkTestState({ testing: false, result: res });
+    setTkTest({ testing: true, result: null });
+    const res = await dataService.testTankerkoenig(trimmedKey);
+    setTkTest({ testing: false, result: res });
   };
 
-  const handleTestSb = async () => {
-    setSbTestState({ testing: true, result: null });
-    const res = await dataService.testSupabase(supabaseUrl, supabaseKey);
-    setSbTestState({ testing: false, result: res });
-  };
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // Save API credentials
-    dataService.saveCredentials({
-      supabaseUrl: supabaseUrl.trim(),
-      supabaseKey: supabaseKey.trim(),
-      tankerkoenigKey: tkKey.trim(),
-    });
-
-    // Save user settings
-    onSaveSettings({
-      alertThresholdCent: parseFloat(thresholdCent),
-      commuteMorningStart,
-      commuteMorningEnd,
-      commuteEveningStart,
-      commuteEveningEnd,
-    });
-
-    // Speichere alles inklusive neuem Tankerkönig Key direkt in die iCloud-Datenbankdatei!
-    backupService.directSyncToICloud().catch((err) => console.warn('iCloud direct sync on settings save:', err));
-
-    setIsSaved(true);
-    setTimeout(() => {
-      setIsSaved(false);
-      onClose();
-    }, 1000);
+    if (keyInvalid) {
+      setTkTest({ testing: false, result: { success: false, message: 'Der Key hat nicht das erwartete Format xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.' } });
+      return;
+    }
+    setSaveState('saving');
+    if (keyChanged) dataService.saveCredentials({ tankerkoenigKey: trimmedKey });
+    onSaveSettings(
+      {
+        alertThresholdCent: Math.round(Number(thresholdCent) * 10) / 10,
+        dailyCommuteKm: Math.max(5, parseInt(dailyCommuteKm, 10) || 30),
+        commuteMorningStart,
+        commuteMorningEnd,
+        commuteEveningStart,
+        commuteEveningEnd,
+        navApp,
+      },
+      { keyChanged }
+    );
+    // Danach als neue Datei mit Zeitstempel sichern (Mac/Browser-Ordner direkt, iPhone per Teilen/Download)
+    let closeDelay = 1200;
+    try {
+      const res = await backupService.saveToDatabase({ explicit: true });
+      setSaveState(res.success ? 'done' : 'error');
+      setSaveMessage(res.success ? describeSaveResult(res) : res.message || 'Datei konnte nicht gespeichert werden – Einstellungen sind lokal übernommen.');
+      if (!res.success) closeDelay = 3500;
+    } catch (err) {
+      setSaveState('error');
+      setSaveMessage(`Einstellungen übernommen, Datei nicht gespeichert: ${err.message}`);
+      closeDelay = 3500;
+    }
+    setTimeout(onClose, closeDelay);
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
-        
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ background: '#0F172A', color: '#FFFFFF', padding: '0.35rem', borderRadius: '6px' }}>
+      <div className="modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Einstellungen">
+        <div className="modal-head">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+            <div className="modal-head-icon">
               <Settings size={16} />
             </div>
             <div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
-                System-Einstellungen & API-Anbindung
-              </h3>
-              <p style={{ fontSize: '0.76rem', color: '#64748B' }}>
-                iCloud Direkt-Sync, Tankerkönig Live-API & Pendler-Schwellenwerte
-              </p>
+              <h3>Einstellungen</h3>
+              <p>Datenbank, Tankerkönig-Key, Karten-App, Fahrprofil und Alarme</p>
             </div>
           </div>
-
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Schließen">
             <X size={20} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
-
-          {/* 1. TANKERKÖNIG API SEKTION (PRIMÄR & ERFORDERLICH) */}
-          <div style={{
-            background: '#FFFFFF',
-            border: '2px solid #F59E0B',
-            borderRadius: '10px',
-            padding: '1rem',
-            marginBottom: '1.25rem',
-            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.08)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                <div style={{ background: '#FEF3C7', color: '#D97706', padding: '0.3rem', borderRadius: '6px' }}>
-                  <Key size={16} />
-                </div>
-                <div>
-                  <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
-                    1. Tankerkönig API-Key (Erforderlich für alle Live-Daten)
-                  </h4>
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className="badge badge-favorable" style={{ fontSize: '0.68rem', fontWeight: 700 }}>
-                  100% Echte Tankstellen
-                </span>
-                <a 
-                  href="https://creativecommons.tankerkoenig.de/" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  style={{ fontSize: '0.74rem', color: '#0284C7', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.2rem', fontWeight: 700 }}
-                >
-                  <span>Kostenlos Key holen</span>
-                  <ExternalLink size={12} />
-                </a>
-              </div>
-            </div>
-
-            <p style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.45, marginBottom: '0.65rem' }}>
-              Ohne persönlichen Key werden <strong>keine Tankstellen und keine Preise</strong> angezeigt. Liefert deutschlandweit minütlich frische MTS-K Daten des Bundeskartellamtes für <strong>Diesel, E5 & E10</strong>. Registrierung dauert 1 Minute auf <em>creativecommons.tankerkoenig.de</em>.
-            </p>
-
-            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.4rem' }}>
-              <input
-                type="text"
-                placeholder="z.B. a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-                value={tkKey}
-                onChange={(e) => setTkKey(e.target.value)}
-                style={{ flex: 1, padding: '0.5rem 0.65rem', borderRadius: '6px', border: '1.5px solid #CBD5E1', fontSize: '0.8rem', fontFamily: 'monospace' }}
-              />
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                style={{ fontSize: '0.74rem', padding: '0.5rem 0.85rem', whiteSpace: 'nowrap', fontWeight: 700 }}
-                onClick={handleTestTk}
-                disabled={tkTestState.testing}
-              >
-                {tkTestState.testing ? 'Prüfe...' : 'Key testen'}
-              </button>
-            </div>
-
-            {tkTestState.result && (
-              <div style={{ 
-                marginTop: '0.4rem', 
-                padding: '0.45rem 0.65rem', 
-                borderRadius: '6px', 
-                fontSize: '0.74rem',
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '0.4rem',
-                background: tkTestState.result.success ? '#ECFDF5' : '#FEF2F2',
-                color: tkTestState.result.success ? '#065F46' : '#991B1B',
-                border: `1px solid ${tkTestState.result.success ? '#A7F3D0' : '#FECACA'}`
-              }}>
-                {tkTestState.result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                <span>{tkTestState.result.message}</span>
-              </div>
-            )}
-          </div>
-
-          {/* 2. ICLOUD SPEICHERORT (FEST IM CODE VERANKERT) */}
-          <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.95rem', marginBottom: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Cloud size={16} color="#0284C7" />
-                <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  2. iCloud Drive Speicherort (Fest im Code verankert)
-                </h4>
-              </div>
-              <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
-                Fest im Code
+          {/* 1. Datenbank */}
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h4><Database size={15} /> Datenbank-Ordner</h4>
+              <span className={`badge ${isDirect ? 'badge-favorable' : 'badge-neutral'}`} style={{ fontSize: '0.65rem' }}>
+                {status.mode ? status.modeLabel : 'Nicht verbunden'}
               </span>
             </div>
-
-            <p style={{ fontSize: '0.74rem', color: '#64748B', lineHeight: 1.45, marginBottom: '0.65rem' }}>
-              Die App greift unabhängig vom Aufrufort immer automatisiert auf dieselbe Datei in deinem macOS iCloud Drive zu:
-            </p>
-
-            <div style={{
-              padding: '0.55rem 0.75rem',
-              background: '#0F172A',
-              color: '#38BDF8',
-              borderRadius: '6px',
-              fontSize: '0.74rem',
-              fontFamily: 'monospace',
-              wordBreak: 'break-all',
-              marginBottom: '0.65rem'
-            }}>
-              {FIXED_ICLOUD_PATH}
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleCheckPath}
-                disabled={isTestingPath}
-                style={{ fontSize: '0.72rem' }}
-              >
-                {isTestingPath ? 'Prüfe Verbindung...' : 'Verbindung prüfen'}
-              </button>
-            </div>
-
-            {pathStatus && (
-              <div style={{
-                marginTop: '0.6rem',
-                padding: '0.45rem 0.65rem',
-                borderRadius: '6px',
-                fontSize: '0.74rem',
-                background: pathStatus.exists ? '#ECFDF5' : '#FFFBEB',
-                color: pathStatus.exists ? '#065F46' : '#92400E',
-                border: `1px solid ${pathStatus.exists ? '#A7F3D0' : '#FDE68A'}`,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-              }}>
-                {pathStatus.exists ? <CheckCircle2 size={14} color="#059669" /> : <Info size={14} color="#D97706" />}
-                <span>
-                  {pathStatus.exists
-                    ? `✓ Datei existiert im Mac iCloud Drive (${pathStatus.path})! Bereit für 1-Klick Sync.`
-                    : `Datei existiert noch nicht. Sie wird beim ersten Klick auf "In iCloud sichern" automatisch dort erstellt.`}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* SUPABASE CLOUD BACKEND SEKTION */}
-          <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.95rem', marginBottom: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Database size={15} color="#059669" />
-                <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  3. Supabase Backend (PostgreSQL Cloud)
-                </h4>
-              </div>
-              <a 
-                href="https://supabase.com" 
-                target="_blank" 
-                rel="noreferrer"
-                style={{ fontSize: '0.72rem', color: '#059669', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.2rem', fontWeight: 600 }}
-              >
-                <span>supabase.com</span>
-                <ExternalLink size={12} />
-              </a>
-            </div>
-
-            <p style={{ fontSize: '0.74rem', color: '#64748B', lineHeight: 1.45, marginBottom: '0.65rem' }}>
-              Speichert deine Preis-Historien, Schwellenwerte und Push-Abonnements dauerhaft. 
-              Führe dazu einmalig das Skript <code>supabase/schema.sql</code> im Supabase SQL Editor aus.
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.4rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', color: '#475569', marginBottom: '0.15rem' }}>
-                  Supabase Project URL (z.B. https://xyz.supabase.co):
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://xyzcompany.supabase.co"
-                  value={supabaseUrl}
-                  onChange={(e) => setSupabaseUrl(e.target.value)}
-                  style={{ width: '100%', padding: '0.42rem 0.65rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.78rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', color: '#475569', marginBottom: '0.15rem' }}>
-                  Supabase Anon Public Key:
-                </label>
-                <input
-                  type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                  value={supabaseKey}
-                  onChange={(e) => setSupabaseKey(e.target.value)}
-                  style={{ width: '100%', padding: '0.42rem 0.65rem', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '0.78rem' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-                <button 
-                  type="button" 
-                  className="btn btn-secondary" 
-                  style={{ fontSize: '0.74rem', padding: '0.4rem 0.75rem' }}
-                  onClick={handleTestSb}
-                  disabled={sbTestState.testing}
-                >
-                  {sbTestState.testing ? 'Prüfe Verbindung...' : 'Supabase-Verbindung testen'}
+            <div className="settings-path">{locationText}</div>
+            <div className="settings-row">
+              <span className="settings-note">
+                {status.currentName
+                  ? `Stand: ${status.currentName}${status.currentAt ? ` (${fmtWhen(status.currentAt)}, ${status.currentSource === 'save' ? 'gespeichert' : 'geladen'})` : ''}.`
+                  : 'Noch keine Datei – die erste entsteht beim ersten Speichern.'}
+                {status.unsavedSince ? ` Änderungen seit ${fmtWhen(status.unsavedSince)} noch nicht in der Datei.` : ''}
+              </span>
+              {onOpenDbSetup && (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenDbSetup}>
+                  <FolderOpen size={12} />
+                  <span>Ordner ändern</span>
                 </button>
-              </div>
-
-              {sbTestState.result && (
-                <div style={{ 
-                  marginTop: '0.2rem', 
-                  padding: '0.4rem 0.6rem', 
-                  borderRadius: '6px', 
-                  fontSize: '0.73rem',
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.4rem',
-                  background: sbTestState.result.success ? '#ECFDF5' : '#FEF2F2',
-                  color: sbTestState.result.success ? '#065F46' : '#991B1B',
-                  border: `1px solid ${sbTestState.result.success ? '#A7F3D0' : '#FECACA'}`
-                }}>
-                  {sbTestState.result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                  <span>{sbTestState.result.message}</span>
-                </div>
               )}
             </div>
-          </div>
+          </section>
 
-          {/* SCHWELLENWERT-BERECHNUNG */}
-          <div style={{ marginBottom: '1.15rem' }}>
-            <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.35rem' }}>
-              <span>Alarm-Schwellenwert (Unter adaptivem Schnitt):</span>
-              <strong className="num-mono" style={{ color: '#059669' }}>{thresholdCent} Cent günstiger</strong>
-            </label>
-            <input
-              type="range"
-              min="1.0"
-              max="10.0"
-              step="0.5"
-              value={thresholdCent}
-              onChange={(e) => setThresholdCent(e.target.value)}
-              style={{ width: '100%', accentColor: '#0F172A' }}
-            />
-            <span style={{ fontSize: '0.73rem', color: '#64748B' }}>
-              Ein Preis gilt als "günstig", wenn er mindestens diesen Betrag unter dem Adaptive Moving Average liegt.
-            </span>
-          </div>
-
-          {/* PENDLER-ZEITFENSTER */}
-          <div style={{ borderTop: '1px solid #F1F5F9', paddingTop: '0.85rem', marginBottom: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' }}>
-              <Clock size={15} color="#0F172A" />
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>
-                Pendler-Zeitfenster (Heimweg-Automatik)
-              </h4>
+          {/* 2. Tankerkönig */}
+          <section className={`settings-section ${!storedKey && !serverKeyAvailable ? 'is-required' : ''}`}>
+            <div className="settings-section-head">
+              <h4><Key size={15} /> Tankerkönig-Key {serverKeyAvailable ? '(optional)' : ''}</h4>
+              <a href="https://creativecommons.tankerkoenig.de/" target="_blank" rel="noreferrer" className="text-link">
+                Kostenlos Key holen <ExternalLink size={12} />
+              </a>
             </div>
+            <p className="settings-note" style={{ marginBottom: '0.6rem' }}>
+              {serverKeyAvailable
+                ? 'Auf dem Server ist bereits ein Key hinterlegt – die App funktioniert auch ohne eigenen. Ein eigener Key hat Vorrang.'
+                : 'Ohne Key gibt es keine Tankstellen und keine Preise. Der Key liefert die amtlichen MTS-K-Daten für Diesel, E5 und E10.'}
+              {' '}Er wird lokal und in der Datenbank-Datei gesichert.
+            </p>
+            <div className="input-with-btn">
+              <input
+                className={`text-input is-mono ${keyInvalid ? 'is-invalid' : ''}`}
+                type="text"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                value={tkKey}
+                onChange={(e) => {
+                  setTkKey(e.target.value);
+                  setTkTest({ testing: false, result: null });
+                }}
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-label="Tankerkönig API-Key"
+              />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={handleTestTk} disabled={tkTest.testing || !trimmedKey}>
+                {tkTest.testing ? <RefreshCw size={13} className="animate-spin" /> : null}
+                <span>{tkTest.testing ? 'Prüfe …' : 'Testen'}</span>
+              </button>
+            </div>
+            {tkTest.result && (
+              <div className={`inline-msg ${tkTest.result.success ? 'is-success' : 'is-error'}`} style={{ marginTop: '0.5rem' }}>
+                {tkTest.result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                <span>{tkTest.result.message}</span>
+              </div>
+            )}
+            {!tkTest.result && storedKey && !keyChanged && (
+              <div className="settings-note" style={{ marginTop: '0.4rem', color: '#059669', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <CheckCircle2 size={13} /> Eigener Key ist gespeichert.
+              </div>
+            )}
+          </section>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.78rem' }}>
+          {/* 3. Karten-App */}
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h4><Navigation size={15} /> Navigation öffnen mit</h4>
+            </div>
+            <div className="segmented is-wide" role="group" aria-label="Karten-App">
+              {NAV_OPTIONS.map((o) => (
+                <button key={o.id} type="button" className={navApp === o.id ? 'active' : ''} onClick={() => setNavApp(o.id)} aria-pressed={navApp === o.id}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <p className="settings-note" style={{ marginTop: '0.45rem' }}>
+              {navApp === 'apple'
+                ? `Standard. Bei einer Fahrt übernimmt ${navAppLabel('apple')} den Tankstopp als Zwischenziel (ab iOS 18.4).`
+                : `Google Maps muss auf dem iPhone installiert sein, sonst öffnet sich die Webversion. Der Tankstopp wird als Zwischenziel übernommen.`}
+            </p>
+          </section>
+
+          {/* 4. Fahrprofil */}
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h4><Car size={15} /> Fahrprofil</h4>
+            </div>
+            <div className="settings-slider-head">
+              <span>Fahrstrecke pro Tag</span>
+              <strong className="num-mono">{dailyCommuteKm} km</strong>
+            </div>
+            <input type="range" min="5" max="200" step="5" value={dailyCommuteKm} onChange={(e) => setDailyCommuteKm(Number(e.target.value))} aria-label="Fahrstrecke pro Tag" />
+            <p className="settings-note" style={{ marginBottom: '0.75rem' }}>Daraus schätzt der Tankwart, wie lange der Tank noch reicht und ob sich Warten lohnt.</p>
+
+            <div className="settings-slider-head" style={{ marginBottom: '0.35rem' }}>
+              <span><Clock size={13} style={{ verticalAlign: '-2px' }} /> Übliche Tankzeiten (Morgen-/Abend-Vergleich)</span>
+            </div>
+            <div className="time-grid">
               <div>
-                <label style={{ display: 'block', color: '#64748B', marginBottom: '0.2rem' }}>Morgen-Rushhour:</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <input
-                    type="time"
-                    value={commuteMorningStart}
-                    onChange={(e) => setCommuteMorningStart(e.target.value)}
-                    style={{ padding: '0.35rem', borderRadius: '4px', border: '1px solid #E2E8F0', width: '100%' }}
-                  />
+                <span className="field-label">Morgens</span>
+                <div className="time-range">
+                  <input type="time" className="text-input" value={commuteMorningStart} onChange={(e) => setCommuteMorningStart(e.target.value)} aria-label="Morgens von" />
                   <span>bis</span>
-                  <input
-                    type="time"
-                    value={commuteMorningEnd}
-                    onChange={(e) => setCommuteMorningEnd(e.target.value)}
-                    style={{ padding: '0.35rem', borderRadius: '4px', border: '1px solid #E2E8F0', width: '100%' }}
-                  />
+                  <input type="time" className="text-input" value={commuteMorningEnd} onChange={(e) => setCommuteMorningEnd(e.target.value)} aria-label="Morgens bis" />
                 </div>
               </div>
-
               <div>
-                <label style={{ display: 'block', color: '#64748B', marginBottom: '0.2rem' }}>Abend-Heimweg:</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <input
-                    type="time"
-                    value={commuteEveningStart}
-                    onChange={(e) => setCommuteEveningStart(e.target.value)}
-                    style={{ padding: '0.35rem', borderRadius: '4px', border: '1px solid #E2E8F0', width: '100%' }}
-                  />
+                <span className="field-label">Abends</span>
+                <div className="time-range">
+                  <input type="time" className="text-input" value={commuteEveningStart} onChange={(e) => setCommuteEveningStart(e.target.value)} aria-label="Abends von" />
                   <span>bis</span>
-                  <input
-                    type="time"
-                    value={commuteEveningEnd}
-                    onChange={(e) => setCommuteEveningEnd(e.target.value)}
-                    style={{ padding: '0.35rem', borderRadius: '4px', border: '1px solid #E2E8F0', width: '100%' }}
-                  />
+                  <input type="time" className="text-input" value={commuteEveningEnd} onChange={(e) => setCommuteEveningEnd(e.target.value)} aria-label="Abends bis" />
                 </div>
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Footer buttons */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', borderTop: '1px solid #F1F5F9', paddingTop: '1rem' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              Abbrechen
-            </button>
-            <button type="submit" className="btn btn-primary">
-              {isSaved ? <Check size={14} /> : null}
-              <span>{isSaved ? 'Gespeichert!' : 'Einstellungen sichern'}</span>
+          {/* 5. Preisalarm */}
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h4><Bell size={15} /> Preisalarm</h4>
+            </div>
+            <div className="settings-slider-head">
+              <span>Melden ab</span>
+              <strong className="num-mono" style={{ color: '#059669' }}>{fmtNum(thresholdCent, 1)} ct Ersparnis</strong>
+            </div>
+            <input type="range" min="1" max="10" step="0.5" value={thresholdCent} onChange={(e) => setThresholdCent(Number(e.target.value))} aria-label="Alarm-Schwelle in Cent" />
+            <p className="settings-note">
+              Hinweis, wenn die günstigste geöffnete Tankstelle mindestens so viel unter ihrem üblichen Preis für diese Uhrzeit oder unter dem Regionsmedian liegt. Benachrichtigungen schaltest du über die Glocke oben ein.
+            </p>
+          </section>
+
+          <div className="modal-foot">
+            {saveState && saveState !== 'saving' && (
+              <span className={`settings-save-msg ${saveState === 'error' ? 'is-error' : ''}`}>{saveMessage}</span>
+            )}
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Abbrechen</button>
+            <button type="submit" className="btn btn-primary" disabled={saveState === 'saving'}>
+              {saveState === 'done' ? <Check size={14} /> : saveState === 'saving' ? <RefreshCw size={14} className="animate-spin" /> : null}
+              <span>{saveState === 'saving' ? 'Speichere …' : saveState === 'done' ? 'Gespeichert' : 'Speichern'}</span>
             </button>
           </div>
-
         </form>
-
       </div>
     </div>
   );

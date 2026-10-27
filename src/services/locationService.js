@@ -10,33 +10,16 @@ const STORAGE_KEY = 'kraftstoff_user_locations';
 const ACTIVE_LOCATION_KEY = 'kraftstoff_active_location_id';
 
 // Standard-Standorte
+// Neutraler Startpunkt bis der erste GPS-Standort oder ein eigener Ort angelegt ist
 export const INITIAL_LOCATIONS = [
   {
     id: 'loc-home-mitte',
-    name: 'Zuhause (Berlin-Mitte)',
-    address: 'Alexanderplatz, 10178 Berlin',
+    name: 'Startpunkt (Berlin Mitte)',
+    address: 'Wird beim ersten Start durch deinen GPS-Standort ersetzt',
     lat: 52.5200,
     lng: 13.4050,
     radiusKm: 6.0,
     isDefault: true,
-  },
-  {
-    id: 'loc-work-charlotte',
-    name: 'Arbeitsplatz (Tiergarten / Ku’damm)',
-    address: 'Potsdamer Platz 1, 10785 Berlin',
-    lat: 52.5096,
-    lng: 13.3759,
-    radiusKm: 5.0,
-    isDefault: false,
-  },
-  {
-    id: 'loc-weekend-wannsee',
-    name: 'Wochenende (Wannsee / Potsdam)',
-    address: 'Königstraße 50, 14109 Berlin',
-    lat: 52.4200,
-    lng: 13.1400,
-    radiusKm: 8.0,
-    isDefault: false,
   },
 ];
 
@@ -116,30 +99,45 @@ export function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
   return parseFloat((R * c).toFixed(2));
 }
 
+const GPS_ERROR_TEXT = {
+  1: 'Standortzugriff nicht erlaubt. Bitte in den Einstellungen (Safari → Standort) freigeben.',
+  2: 'Standort konnte nicht bestimmt werden (kein GPS-/WLAN-Signal).',
+  3: 'Standortbestimmung dauert zu lange. Bitte erneut versuchen.',
+};
+
 /**
- * Berechnet neue Koordinaten ausgehend von einem Punkt mit Distanz und Peilung (Winkel).
+ * Aktuelle Position mit verständlichen Fehlermeldungen. Versucht erst genau (GPS), bei Zeitüberschreitung
+ * noch einmal mit geringerer Genauigkeit. Positionen bis 1 Minute alt werden wiederverwendet.
+ * @returns {Promise<{lat:number, lng:number, accuracy:number}>}
  */
-export function offsetCoordinates(lat, lng, distanceKm, bearingDeg) {
-  const R = 6371;
-  const d = distanceKm / R;
-  const brng = (bearingDeg * Math.PI) / 180;
-  const lat1 = (lat * Math.PI) / 180;
-  const lon1 = (lng * Math.PI) / 180;
-
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng)
-  );
-  const lon2 =
-    lon1 +
-    Math.atan2(
-      Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
-      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+export function getCurrentPosition({ timeoutMs = 10000 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      reject(new Error('Standort ist nur über eine sichere Verbindung (https) verfügbar.'));
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('Dieses Gerät bzw. dieser Browser unterstützt keine Standortbestimmung.'));
+      return;
+    }
+    const ok = (pos) => resolve({
+      lat: Math.round(pos.coords.latitude * 1e6) / 1e6,
+      lng: Math.round(pos.coords.longitude * 1e6) / 1e6,
+      accuracy: pos.coords.accuracy,
+    });
+    const fail = (err) => reject(new Error(GPS_ERROR_TEXT[err?.code] || err?.message || 'Standort nicht verfügbar.'));
+    navigator.geolocation.getCurrentPosition(
+      ok,
+      (err) => {
+        if (err?.code === 3 || err?.code === 2) {
+          navigator.geolocation.getCurrentPosition(ok, fail, { timeout: timeoutMs, enableHighAccuracy: false, maximumAge: 5 * 60 * 1000 });
+        } else {
+          fail(err);
+        }
+      },
+      { timeout: timeoutMs, enableHighAccuracy: true, maximumAge: 60 * 1000 }
     );
-
-  return {
-    lat: parseFloat(((lat2 * 180) / Math.PI).toFixed(6)),
-    lng: parseFloat(((lon2 * 180) / Math.PI).toFixed(6)),
-  };
+  });
 }
 
 class LocationService {
@@ -221,13 +219,16 @@ class LocationService {
    * 3. OpenStreetMap Nominatim
    * 4. Smart Offline-Lexikon für 40+ deutsche Städte
    */
-  async geocodeAddress(query) {
+  async geocodeAddress(query, { bias = null } = {}) {
     if (!query || query.trim() === '') return null;
     const clean = query.trim().toLowerCase();
+    const biasParams = bias && Number.isFinite(bias.lat) && Number.isFinite(bias.lng)
+      ? `&lat=${bias.lat.toFixed(4)}&lon=${bias.lng.toFixed(4)}`
+      : '&lat=51.1657&lon=10.4515'; // Mitte Deutschlands
 
     // 1. Photon by Komoot API (Weltweit, auf OpenStreetMap-Basis, keine restriktiven Browser-Limits)
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1`;
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1${biasParams}`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -417,7 +418,7 @@ class LocationService {
     }
     this.saveLocations(updated);
     this.setActiveLocationId(locId);
-    return { location: locData, locations: updated };
+    return { location: existing || locData, locations: this.locations };
   }
 
   async addLocation(data) {
@@ -484,28 +485,17 @@ class LocationService {
       return stations;
     }
 
-    const filtered = stations
-      .map((station) => {
-        const stLat = parseFloat(station.lat);
-        const stLng = parseFloat(station.lng);
-        if (isNaN(stLat) || isNaN(stLng)) {
-          return { ...station, distanceKm: 1.0, isWithinRadius: true };
-        }
-        const dist = calculateHaversineDistance(locLat, locLng, stLat, stLng);
-        return {
-          ...station,
-          distanceKm: isNaN(dist) ? 1.0 : dist,
-          isWithinRadius: isNaN(dist) ? true : dist <= radius,
-        };
-      })
-      .filter((s) => s.isWithinRadius);
-
-    // Falls durch sehr kleinen Radius keine Stationen übrig bleiben, zeige die 3 nächsten an
-    if (filtered.length === 0 && stations.length > 0) {
-      return [...stations].sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0)).slice(0, 4);
+    // Abstand immer neu zum gewählten Ort berechnen; kleine Toleranz für Rundungen der API
+    const out = [];
+    for (const station of stations) {
+      const stLat = parseFloat(station.lat);
+      const stLng = parseFloat(station.lng);
+      if (isNaN(stLat) || isNaN(stLng)) continue;
+      const dist = calculateHaversineDistance(locLat, locLng, stLat, stLng);
+      if (!Number.isFinite(dist) || dist > radius + 0.1) continue;
+      out.push({ ...station, distanceKm: dist, isWithinRadius: true });
     }
-
-    return filtered;
+    return out;
   }
 }
 

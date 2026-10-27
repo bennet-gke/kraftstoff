@@ -1,591 +1,318 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap, Star, ShieldCheck } from 'lucide-react';
+import { X, Navigation, Sparkles, MapPin, Calculator, Clock, Zap, Star, ShieldCheck, AlertTriangle, Database } from 'lucide-react';
 import PriceTrendChart from './PriceTrendChart';
+import ForecastStrip from './ForecastStrip';
 import { dataService } from '../services/dataService';
+import { navigateToStation, resolveNavApp, navAppLabel } from '../services/navHandoff';
+import { fmtNum } from '../utils/format';
 import { calculateDetourProfitability } from '../engine/detourCalculator';
-import { simulateArrivalPriceMonteCarlo, calculateOptimalTimingForStation } from '../engine/monteCarloArrival';
+import { forecastStationCurve } from '../engine/mlModel';
+import { describeWindowTime, describeWindowRange } from '../engine/regionalTrends';
+
+const de = (v, digits = 1) => fmtNum(v, digits);
+// Kosten mit Vorzeichen: Kosten als "−", Ersparnis (kürzerer Umweg) als "+", nichts ohne Vorzeichen
+const costSign = (v) => (v > 0.004 ? '−' : v < -0.004 ? '+' : '');
+const detourText = (km) => (km < 0.1 ? 'an der Strecke' : km >= 1 ? `+${de(km)} km Abstecher` : `+${Math.round(km * 1000)} m Abstecher`);
 
 export default function StationDetailModal({
   station,
   baseStation,
   activeVehicle,
-  evaluation,
-  mlPrediction,
   fuelType = 'diesel',
   defaultDetourMode = 'local_roundtrip',
   isFavorite = false,
   onToggleFavorite,
   onClose,
+  profile = null,
+  windows = null,
+  moves = null,
+  rules,
+  fillLiters = null,
+  consumption = null,
+  navApp = 'apple',
 }) {
-  // Echte Station-Details von Tankerkönig (detail.php)
   const [stationDetails, setStationDetails] = useState(null);
-  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   useEffect(() => {
-    const sId = station?.tankerkoenig_id || station?.id;
+    const sId = station?.id;
     if (sId && dataService.hasValidTankerkoenigKey()) {
-      setIsLoadingDetails(true);
-      dataService.getStationDetails(sId)
-        .then((res) => {
-          if (res) setStationDetails(res);
-        })
-        .catch(() => {})
-        .finally(() => setIsLoadingDetails(false));
+      dataService.getStationDetails(sId).then((res) => { if (res) setStationDetails(res); }).catch(() => {});
     }
-  }, [station]);
+  }, [station?.id]);
 
-  // Interaktive Rechner-Parameter im Modal
-  const defaultLiters = activeVehicle
-    ? Math.round(activeVehicle.tankCapacityL * (1 - (activeVehicle.currentFuelLevelPct || 20) / 100))
-    : 45;
-
+  const defaultLiters = Number.isFinite(fillLiters) ? Math.min(85, Math.max(10, Math.round(fillLiters / 5) * 5)) : 40;
   const [simLiters, setSimLiters] = useState(defaultLiters);
-  const [simConsumption, setSimConsumption] = useState(activeVehicle?.consumptionL100km || 6.2);
-  const simWear = 0.06; // 6 Cent/km kalkulatorischer Verschleiß
+  const [simConsumption, setSimConsumption] = useState(consumption || activeVehicle?.consumptionL100km || 6.2);
+  const simWear = 0.05;
   const [modalDetourMode, setModalDetourMode] = useState(station?.isOnRouteCorridor ? 'route_corridor' : defaultDetourMode);
 
-  // Umweg-Rentabilität
   const detour = useMemo(() => {
-    if (!station) return calculateDetourProfitability({ targetPrice: 1.70, targetDistanceKm: 0 });
+    if (!station) return null;
     return calculateDetourProfitability({
       targetPrice: station.currentPrice,
-      targetDistanceKm: station.distanceKm,
+      targetDistanceKm: station.distanceKm ?? 0,
       basePrice: baseStation ? baseStation.currentPrice : station.currentPrice,
-      baseDistanceKm: baseStation ? baseStation.distanceKm : 0,
+      baseDistanceKm: baseStation ? baseStation.distanceKm ?? 0 : 0,
       fillLiters: simLiters,
       consumptionL100km: simConsumption,
       wearCostPerKm: simWear,
       isRoundtrip: modalDetourMode !== 'route_corridor',
       detourMode: modalDetourMode,
       realAdditionalKm: station.realAdditionalKm,
+      baseAdditionalKm: station.realAdditionalKm !== undefined && baseStation?.realAdditionalKm !== undefined ? baseStation.realAdditionalKm : 0,
     });
-  }, [station, baseStation, simLiters, simConsumption, simWear, modalDetourMode]);
+  }, [station, baseStation, simLiters, simConsumption, modalDetourMode]);
 
-  // Monte-Carlo Ankunftssimulation (1.000 Pfade)
-  const arrival = useMemo(() => {
-    if (!station) return simulateArrivalPriceMonteCarlo({ currentPrice: 1.70, distanceKm: 0 });
-    return simulateArrivalPriceMonteCarlo({
-      currentPrice: station.currentPrice,
-      distanceKm: station.distanceKm,
-      isRouteCorridor: modalDetourMode === 'route_corridor',
-    });
-  }, [station, modalDetourMode]);
+  // Ankunft wird in der App berechnet (inkl. Reisegeschwindigkeit der Route)
+  const outlook = station?.outlook || null;
 
-  // Optimale Uhrzeiten & Bester Tag
-  const timing = useMemo(() => {
-    if (!station) return calculateOptimalTimingForStation(1.70, []);
-    return calculateOptimalTimingForStation(station.currentPrice, station.history);
-  }, [station]);
+  const forecast = useMemo(() => {
+    if (!station || !profile) return null;
+    return forecastStationCurve({ station, pts: station.readings || [], profile, rules });
+  }, [station, profile, rules]);
 
   if (!station) return null;
 
-  const timingSavingsEuro = ((timing.savingsVsNowCent * simLiters) / 100).toFixed(2);
-
-  const openNavigation = () => {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${station.lat},${station.lng}`;
-    window.open(url, '_blank');
-  };
-
-  const score = mlPrediction?.score || evaluation?.score || 50;
-
+  const evaluation = station.evaluation;
+  const score = station.score?.score ?? 50;
+  const readings = station.readings || [];
+  const isBase = baseStation && baseStation.id === station.id;
+  const deltaRegionCt = station.deltaToRegionCent ?? 0;
+  const nextWindow = windows?.nextWindow || null;
+  const forecastSavingsEuro = forecast ? (forecast.potentialSavingsCent * simLiters) / 100 : 0;
+  const preferredNav = resolveNavApp(navApp);
+  const openNavigation = () => navigateToStation(station, navApp);
+  void moves;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '840px', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
-        
+      <div className="modal-content is-tall" style={{ maxWidth: '840px' }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem' }}>
-          <div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem', gap: '0.5rem' }}>
+          <div style={{ flex: '1 1 260px', minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  fontSize: '0.72rem',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '4px',
-                  background: '#F1F5F9',
-                  color: '#334155',
-                }}
-              >
-                {station.brand}
-              </span>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>
-                {station.name}
-              </h3>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '4px', background: '#F1F5F9', color: '#334155' }}>{station.brand}</span>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>{station.name}</h3>
+              <span className="num-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: deltaRegionCt <= -1 ? '#059669' : deltaRegionCt >= 1 ? '#DC2626' : '#0F172A' }}>{Number.isFinite(station.currentPrice) ? de(station.currentPrice, 3) : '–'} €</span>
             </div>
-            {/* Adresse & Ort */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#64748B', fontSize: '0.78rem', marginTop: '0.25rem' }}>
               <MapPin size={13} color="#94A3B8" style={{ flexShrink: 0 }} />
               <span style={{ wordBreak: 'break-word' }}>{station.street}, {station.postCode || ''} {station.city}</span>
             </div>
-
-            {/* Status-Badges (ohne umbrechende Bullet-Dots) */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
               {station.isOnRouteCorridor && station.kmAlongRoute !== undefined ? (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.25rem',
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    color: '#1D4ED8',
-                    background: '#EFF6FF',
-                    border: '1px solid #BFDBFE',
-                    padding: '0.15rem 0.45rem',
-                    borderRadius: '6px',
-                  }}
-                >
-                  <Navigation size={11} color="#1D4ED8" />
-                  <span>km {station.kmAlongRoute} auf Route ({station.routeDetourKm < 0.1 ? 'an der Strecke' : `+${(station.routeDetourKm * 1000).toFixed(0)}m Abstecher`})</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
+                  <Navigation size={11} />
+                  <span>{station.aheadKm !== undefined ? `in ${station.aheadKm} km` : `km ${Math.round(station.kmAlongRoute)} der Strecke`} ({detourText(station.routeDetourKm)})</span>
                 </span>
               ) : (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.25rem',
-                    fontSize: '0.72rem',
-                    fontWeight: 600,
-                    color: '#334155',
-                    background: '#F1F5F9',
-                    padding: '0.15rem 0.45rem',
-                    borderRadius: '6px',
-                  }}
-                >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 600, color: '#334155', background: '#F1F5F9', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
                   <Navigation size={11} color="#64748B" />
-                  <span className="num-mono">{station.distanceKm} km entfernt</span>
+                  <span className="num-mono">{Number.isFinite(station.distanceKm) ? `${de(station.distanceKm)} km entfernt` : 'Entfernung unbekannt'}</span>
                 </span>
               )}
-
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  fontSize: '0.72rem',
-                  fontWeight: 700,
-                  color: station.isOpen !== false ? '#065F46' : '#DC2626',
-                  background: station.isOpen !== false ? '#ECFDF5' : '#FEF2F2',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '6px',
-                }}
-              >
-                {station.isOpen !== false ? '● Jetzt Geöffnet' : '● Derzeit Geschlossen'}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', fontWeight: 700, color: station.isOpen !== false ? '#065F46' : '#DC2626', background: station.isOpen !== false ? '#ECFDF5' : '#FEF2F2', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
+                {station.isOpen !== false ? '● Geöffnet' : '● Geschlossen'}
               </span>
-
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  fontSize: '0.7rem',
-                  fontWeight: 600,
-                  color: '#0284C7',
-                  background: '#F0F9FF',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '6px',
-                }}
-              >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.7rem', fontWeight: 600, color: '#0284C7', background: '#F0F9FF', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
                 <ShieldCheck size={11} />
-                <span>MTS-K Echtzeitdaten</span>
+                <span>{station.priceSource === 'last_known' ? 'Letzter gemeldeter Preis' : station.isFromCache ? 'Zwischengespeicherter Preis' : 'MTS-K Live-Preis'}</span>
               </span>
+              {Math.abs(deltaRegionCt) >= 0.5 && (
+                <span className={`badge ${deltaRegionCt < 0 ? 'badge-favorable' : 'badge-unfavorable'}`} style={{ fontSize: '0.7rem', padding: '0.12rem 0.45rem' }}>
+                  {deltaRegionCt > 0 ? '+' : ''}{de(deltaRegionCt)} ct zum Regionsmedian
+                </span>
+              )}
             </div>
-
-            {/* Reale Öffnungszeiten von Tankerkönig detail.php */}
             {stationDetails && (
-              <div style={{
-                marginTop: '0.45rem',
-                padding: '0.35rem 0.6rem',
-                background: '#F8FAFC',
-                borderRadius: '6px',
-                fontSize: '0.73rem',
-                color: '#334155',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                flexWrap: 'wrap',
-                border: '1px solid #E2E8F0',
-              }}>
+              <div style={{ marginTop: '0.45rem', padding: '0.35rem 0.6rem', background: '#F8FAFC', borderRadius: '6px', fontSize: '0.73rem', color: '#334155', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', border: '1px solid #E2E8F0' }}>
                 <Clock size={13} color="#64748B" />
                 {stationDetails.wholeDay ? (
                   <strong style={{ color: '#059669' }}>Durchgehend 24 Stunden geöffnet</strong>
                 ) : stationDetails.openingTimes && stationDetails.openingTimes.length > 0 ? (
-                  <span>
-                    Öffnungszeiten: {stationDetails.openingTimes.map((t) => `${t.text ? t.text + ' ' : ''}${t.start ? t.start.slice(0, 5) : ''}-${t.end ? t.end.slice(0, 5) : ''}`).join(', ')}
-                  </span>
+                  <span>Öffnungszeiten: {stationDetails.openingTimes.map((t) => `${t.text ? t.text + ' ' : ''}${t.start ? t.start.slice(0, 5) : ''}–${t.end ? t.end.slice(0, 5) : ''}`).join(', ')}</span>
                 ) : (
-                  <span>Reguläre Öffnungszeiten gemäß MTS-K Meldestelle</span>
+                  <span>Öffnungszeiten laut MTS-K nicht hinterlegt</span>
                 )}
               </div>
             )}
-
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexShrink: 0, marginLeft: 'auto' }}>
             <button
               type="button"
-              onClick={() => onToggleFavorite && onToggleFavorite(station.id)}
-              style={{
-                background: isFavorite ? '#FEF3C7' : '#F8FAFC',
-                border: isFavorite ? '1px solid #FDE68A' : '1px solid #E2E8F0',
-                color: isFavorite ? '#92400E' : '#334155',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                borderRadius: '8px',
-                fontWeight: 700,
-                fontSize: '0.76rem',
-                padding: '0.35rem 0.65rem',
-                cursor: 'pointer',
-              }}
+              onClick={() => onToggleFavorite && onToggleFavorite(station)}
+              aria-pressed={isFavorite}
+              style={{ background: isFavorite ? '#FEF3C7' : '#F8FAFC', border: isFavorite ? '1px solid #FDE68A' : '1px solid #E2E8F0', color: isFavorite ? '#92400E' : '#334155', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', borderRadius: '8px', fontWeight: 700, fontSize: '0.76rem', padding: '0.35rem 0.65rem', cursor: 'pointer' }}
               title={isFavorite ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}
             >
               <Star size={13} fill={isFavorite ? '#F59E0B' : 'none'} color={isFavorite ? '#F59E0B' : '#64748B'} />
               <span>{isFavorite ? 'Favorit' : 'Merken'}</span>
             </button>
-            <button className="btn btn-sm btn-primary" onClick={openNavigation}>
+            <button className="btn btn-sm btn-primary" onClick={openNavigation} title={`Navigation mit ${navAppLabel(preferredNav)}`}>
               <Navigation size={13} />
-              <span>Navigation</span>
+              <span>{navAppLabel(preferredNav)}</span>
             </button>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.25rem' }}>
+            <button onClick={onClose} aria-label="Schließen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.25rem' }}>
               <X size={20} />
             </button>
           </div>
         </div>
 
-        {/* 1. WIRTSCHAFTLICHKEITS-RECHNER: Lohnt sich die Fahrt? */}
-        <div
-          style={{
-            background: detour.isProfitable ? '#ECFDF5' : '#FFF1F2',
-            border: `1px solid ${detour.isProfitable ? '#A7F3D0' : '#FECDD3'}`,
-            borderRadius: '10px',
-            padding: '1.1rem',
-            marginBottom: '1.25rem',
-          }}
-        >
-          {/* Umschalter für die Fahrt-Option */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-              <Calculator size={16} color={detour.isProfitable ? '#059669' : '#DC2626'} />
-              <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>
-                Wirtschaftlichkeits-Rechnung: Lohnt sich die Fahrt?
-              </strong>
+        {/* 1. Wirtschaftlichkeit */}
+        {detour && (
+          <div style={{ background: isBase ? '#F8FAFC' : detour.isProfitable ? '#ECFDF5' : '#FFF1F2', border: `1px solid ${isBase ? '#E2E8F0' : detour.isProfitable ? '#A7F3D0' : '#FECDD3'}`, borderRadius: '10px', padding: '1.1rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                <Calculator size={16} color={detour.isProfitable || isBase ? '#059669' : '#DC2626'} />
+                <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>Lohnt sich die Fahrt?</strong>
+              </div>
+              <div style={{ display: 'flex', background: '#FFFFFF', padding: '0.15rem', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
+                {[['local_roundtrip', 'Vom Ort aus (Hin & Rück)'], ['route_corridor', 'An Fahrt-Strecke (Zusatz-km)']].map(([mode, label]) => (
+                  <button key={mode} type="button" onClick={() => setModalDetourMode(mode)} style={{ border: 'none', background: modalDetourMode === mode ? '#0F172A' : 'transparent', color: modalDetourMode === mode ? '#FFFFFF' : '#475569', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Option: Von einem Ort aus vs. An einer Strecke */}
-            <div style={{ display: 'flex', background: '#FFFFFF', padding: '0.15rem', borderRadius: '6px', border: '1px solid #CBD5E1' }}>
-              <button
-                type="button"
-                onClick={() => setModalDetourMode('local_roundtrip')}
-                style={{
-                  border: 'none',
-                  background: modalDetourMode === 'local_roundtrip' ? '#0F172A' : 'transparent',
-                  color: modalDetourMode === 'local_roundtrip' ? '#FFFFFF' : '#475569',
-                  padding: '0.2rem 0.55rem',
-                  borderRadius: '4px',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Vom Ort aus (Hin & Rück)
-              </button>
-              <button
-                type="button"
-                onClick={() => setModalDetourMode('route_corridor')}
-                style={{
-                  border: 'none',
-                  background: modalDetourMode === 'route_corridor' ? '#0F172A' : 'transparent',
-                  color: modalDetourMode === 'route_corridor' ? '#FFFFFF' : '#475569',
-                  padding: '0.2rem 0.55rem',
-                  borderRadius: '4px',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                An Fahrt-Strecke (Zusatz-km)
-              </button>
-            </div>
-          </div>
+            {isBase ? (
+              <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>Diese Station ist deine Basistankstelle (nächste geöffnete Station). Alle anderen werden gegen sie gerechnet.</p>
+            ) : (
+              <>
+                {baseStation && (
+                  <div style={{ background: '#FFFFFF', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '0.65rem', fontSize: '0.74rem', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    <div>
+                      <span>Vergleichs-Basis: </span>
+                      <strong style={{ color: '#0F172A' }}>{baseStation.name}</strong> ({Number.isFinite(baseStation.distanceKm) ? `${de(baseStation.distanceKm)} km • ` : ''}<span className="num-mono" style={{ fontWeight: 700 }}>{de(baseStation.currentPrice, 3)} €</span>)
+                    </div>
+                    <div style={{ color: detour.priceDiffCent > 0 ? '#059669' : '#DC2626', fontWeight: 700 }}>
+                      {detour.priceDiffCent > 0 ? `−${de(detour.priceDiffCent)} ct/L günstiger` : `+${de(Math.abs(detour.priceDiffCent))} ct/L teurer`}
+                    </div>
+                  </div>
+                )}
+                <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.85rem' }}>{detour.reasoning}</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem', fontSize: '0.75rem', marginBottom: '0.85rem' }}>
+                  <div>
+                    <span style={{ color: '#94A3B8', display: 'block' }}>Brutto an der Säule</span>
+                    <strong className="num-mono" style={{ color: detour.grossSavingsEuro >= 0 ? '#059669' : '#DC2626', fontSize: '1rem' }}>{detour.grossSavingsEuro >= 0 ? '+' : ''}{de(detour.grossSavingsEuro, 2)} €</strong>
+                    <span style={{ color: '#64748B', display: 'block' }}>({de(detour.priceDiffCent)} ct/L × {simLiters} L)</span>
+                  </div>
+                  <div>
+                    <span style={{ color: '#94A3B8', display: 'block' }}>{modalDetourMode === 'route_corridor' ? 'Sprit Zusatz-km' : 'Sprit Hin/Rück'}</span>
+                    <strong className="num-mono" style={{ color: detour.fuelCostDetourEuro > 0.004 ? '#DC2626' : detour.fuelCostDetourEuro < -0.004 ? '#059669' : '#64748B', fontSize: '1rem' }}>{costSign(detour.fuelCostDetourEuro)}{de(Math.abs(detour.fuelCostDetourEuro), 2)} €</strong>
+                    <span style={{ color: '#64748B', display: 'block' }}>({detour.totalDetourKm >= 0 ? `${de(detour.totalDetourKm)} km Mehrweg` : `${de(-detour.totalDetourKm)} km weniger Umweg`})</span>
+                  </div>
+                  <div>
+                    <span style={{ color: '#94A3B8', display: 'block' }}>Verschleiß ({de(simWear, 2)} €/km)</span>
+                    <strong className="num-mono" style={{ color: '#64748B', fontSize: '1rem' }}>{costSign(detour.wearCostEuro)}{de(Math.abs(detour.wearCostEuro), 2)} €</strong>
+                    <span style={{ color: '#64748B', display: 'block' }}>Reifen & Bremsen</span>
+                  </div>
+                  <div style={{ borderLeft: '1px solid #E2E8F0', paddingLeft: '0.6rem' }}>
+                    <span style={{ color: '#0F172A', display: 'block', fontWeight: 700 }}>Echter Reingewinn</span>
+                    <strong className="num-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: detour.netSavingsEuro >= 0 ? '#059669' : '#DC2626' }}>{detour.netSavingsEuro > 0 ? '+' : ''}{de(detour.netSavingsEuro, 2)} €</strong>
+                    <span style={{ color: '#64748B', display: 'block' }}>{detour.maxDetourKm > 0 ? `Lohnt bis ${de(detour.maxDetourKm)} km Mehrweg` : 'Kein Umweg lohnt sich'}</span>
+                  </div>
+                </div>
+              </>
+            )}
 
-          {baseStation && (
-            <div style={{ background: '#FFFFFF', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '0.65rem', fontSize: '0.74rem', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.4rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', fontSize: '0.73rem', color: '#475569' }}>
               <div>
-                <span>Vergleichs-Basis: </span>
-                <strong style={{ color: '#0F172A' }}>{baseStation.name}</strong> ({baseStation.distanceKm} km • <span className="num-mono" style={{ fontWeight: 700 }}>{baseStation.currentPrice.toFixed(3)} €</span>)
+                <label style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                  <span>Zu tankende Menge:</span>
+                  <strong className="num-mono">{simLiters} Liter</strong>
+                </label>
+                <input type="range" min="10" max="85" step="5" value={simLiters} onChange={(e) => setSimLiters(parseFloat(e.target.value))} style={{ width: '100%', accentColor: '#0F172A' }} />
               </div>
-              <div style={{ color: detour.priceDiffCent > 0 ? '#059669' : '#DC2626', fontWeight: 700 }}>
-                {detour.priceDiffCent > 0 ? `-${detour.priceDiffCent.toFixed(1)} ct/L günstiger` : `+${Math.abs(detour.priceDiffCent).toFixed(1)} ct/L teurer`}
+              <div>
+                <label style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                  <span>Verbrauch ({activeVehicle?.name || 'Auto'}):</span>
+                  <strong className="num-mono">{de(simConsumption)} L/100 km</strong>
+                </label>
+                <input type="range" min="3.5" max="14.0" step="0.2" value={simConsumption} onChange={(e) => setSimConsumption(parseFloat(e.target.value))} style={{ width: '100%', accentColor: '#0F172A' }} />
               </div>
-            </div>
-          )}
-
-          <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.85rem' }}>
-            {detour.reasoning}
-          </p>
-
-          {/* Detaillierte Zahlenrechnung */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-              gap: '0.6rem',
-              background: '#FFFFFF',
-              border: '1px solid #E2E8F0',
-              borderRadius: '8px',
-              padding: '0.75rem',
-              fontSize: '0.75rem',
-              marginBottom: '0.85rem',
-            }}
-          >
-            <div>
-              <span style={{ color: '#94A3B8', display: 'block' }}>Brutto-Ersparnis Zapfsäule</span>
-              <strong className="num-mono" style={{ color: '#059669', fontSize: '1rem' }}>
-                +{detour.grossSavingsEuro.toFixed(2)} €
-              </strong>
-              <span style={{ color: '#64748B', display: 'block' }}>({detour.priceDiffCent} ct/L × {simLiters} L)</span>
-            </div>
-
-            <div>
-              <span style={{ color: '#94A3B8', display: 'block' }}>
-                {modalDetourMode === 'route_corridor' ? 'Spritkosten Zusatz-km' : 'Spritkosten Hin/Rück'}
-              </span>
-              <strong className="num-mono" style={{ color: '#DC2626', fontSize: '1rem' }}>
-                -{detour.fuelCostDetourEuro.toFixed(2)} €
-              </strong>
-              <span style={{ color: '#64748B', display: 'block' }}>({detour.totalDetourKm} km Mehrweg)</span>
-            </div>
-
-            <div>
-              <span style={{ color: '#94A3B8', display: 'block' }}>Verschleiß ({simWear} €/km)</span>
-              <strong className="num-mono" style={{ color: '#64748B', fontSize: '1rem' }}>
-                -{detour.wearCostEuro.toFixed(2)} €
-              </strong>
-              <span style={{ color: '#64748B', display: 'block' }}>Reifen & Bremsen</span>
-            </div>
-
-            <div style={{ borderLeft: '1px solid #E2E8F0', paddingLeft: '0.6rem' }}>
-              <span style={{ color: '#0F172A', display: 'block', fontWeight: 700 }}>Echter Reingewinn</span>
-              <strong
-                className="num-mono"
-                style={{
-                  fontSize: '1.15rem',
-                  fontWeight: 800,
-                  color: detour.netSavingsEuro >= 0 ? '#059669' : '#DC2626',
-                }}
-              >
-                {detour.netSavingsEuro > 0 ? `+${detour.netSavingsEuro.toFixed(2)} €` : `${detour.netSavingsEuro.toFixed(2)} €`}
-              </strong>
-              <span style={{ color: '#64748B', display: 'block' }}>Max. Mehrweg: {detour.maxDetourKm} km</span>
             </div>
           </div>
+        )}
 
-          {/* Interaktive Feinjustierung: Liter & Verbrauch */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', fontSize: '0.73rem', color: '#475569' }}>
-            <div>
-              <label style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-                <span>Zu tankende Menge (Liter):</span>
-                <strong className="num-mono">{simLiters} Liter</strong>
-              </label>
-              <input
-                type="range"
-                min="10"
-                max="85"
-                step="5"
-                value={simLiters}
-                onChange={(e) => setSimLiters(parseFloat(e.target.value))}
-                style={{ width: '100%', accentColor: '#0F172A' }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-                <span>Verbrauch ({activeVehicle?.name || 'Auto'}):</span>
-                <strong className="num-mono">{simConsumption} L/100km</strong>
-              </label>
-              <input
-                type="range"
-                min="3.5"
-                max="14.0"
-                step="0.2"
-                value={simConsumption}
-                onChange={(e) => setSimConsumption(parseFloat(e.target.value))}
-                style={{ width: '100%', accentColor: '#0F172A' }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 2. MONTE-CARLO PREISÄNDERUNGS-PROGNOSE (1.000 Simulationen) */}
-        <div
-          style={{
-            background: '#FFFFFF',
-            border: '1px solid #E2E8F0',
-            borderRadius: '10px',
-            padding: '1.1rem',
-            marginBottom: '1.25rem',
-          }}
-        >
+        {/* 2. Ankunft & Timing */}
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '1.1rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
               <Clock size={16} color="#0F172A" />
-              <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>
-                Monte-Carlo Prognose: Ändert sich der Preis während der Anfahrt?
-              </strong>
+              <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>Wann hinfahren?</strong>
             </div>
-
-            <span
-              className={`badge ${arrival.riskLevel === 'HIGH' ? 'badge-unfavorable' : arrival.riskLevel === 'MEDIUM' ? 'badge-neutral' : 'badge-favorable'}`}
-              style={{ fontSize: '0.76rem' }}
-            >
-              {arrival.riskLabel}
-            </span>
-          </div>
-
-          <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.75rem' }}>
-            {arrival.recommendation}
-          </p>
-
-          {/* Monte-Carlo Wahrscheinlichkeits-Balken */}
-          <div style={{ marginBottom: '0.85rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: '#64748B', marginBottom: '0.3rem' }}>
-              <span>Wahrscheinlichkeits-Verteilung (1.000 Pfade):</span>
-              <span>Ankunft in <strong>{arrival.driveTimeMin} Min.</strong> ({arrival.arrivalTimeFormatted} Uhr)</span>
-            </div>
-
-            <div style={{ display: 'flex', height: '14px', borderRadius: '7px', overflow: 'hidden', background: '#E2E8F0' }}>
-              <div
-                style={{ width: `${arrival.probabilities.pStable}%`, background: '#10B981' }}
-                title={`Stabil: ${arrival.probabilities.pStable}%`}
-              />
-              <div
-                style={{ width: `${arrival.probabilities.pDrop}%`, background: '#3B82F6' }}
-                title={`Günstiger: ${arrival.probabilities.pDrop}%`}
-              />
-              <div
-                style={{ width: `${arrival.probabilities.pRise}%`, background: '#EF4444' }}
-                title={`Teurer: ${arrival.probabilities.pRise}%`}
-              />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginTop: '0.35rem', color: '#475569' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981' }} />
-                <span>Stabil ({arrival.probabilities.pStable}%)</span>
+            {outlook && (
+              <span className={`badge ${outlook.outlook === 'RISING' ? 'badge-unfavorable' : 'badge-favorable'}`} style={{ fontSize: '0.76rem' }}>
+                {outlook.outlook === 'RISING' ? <AlertTriangle size={12} /> : <ShieldCheck size={12} />}
+                <span>{outlook.label}</span>
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3B82F6' }} />
-                <span>Preissenkung ({arrival.probabilities.pDrop}%)</span>
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#EF4444' }} />
-                <span>Preissprung ({arrival.probabilities.pRise}%)</span>
-              </span>
-            </div>
+            )}
           </div>
-
-          {/* Konfidenz-Intervall Box */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', background: '#F8FAFC', padding: '0.65rem 0.85rem', borderRadius: '6px', fontSize: '0.75rem' }}>
-            <div>
-              <span style={{ color: '#64748B', display: 'block' }}>Erwarteter Preis bei Ankunft:</span>
-              <strong className="num-mono" style={{ fontSize: '1rem', color: '#0F172A' }}>
-                {arrival.meanArrivalPrice.toFixed(3)} €/L
-              </strong>
-            </div>
-            <div>
-              <span style={{ color: '#64748B', display: 'block' }}>90% Prognose-Korridor:</span>
-              <strong className="num-mono" style={{ fontSize: '1rem', color: '#0F172A' }}>
-                {arrival.priceRange90[0].toFixed(3)} – {arrival.priceRange90[1].toFixed(3)} €
-              </strong>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. OPTIMALE UHRZEITEN & TAGE (HEUTE & DIESE WOCHE) */}
-        <div
-          style={{
-            background: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-            borderRadius: '10px',
-            padding: '1.1rem',
-            marginBottom: '1.25rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.6rem' }}>
-            <Zap size={16} color="#D97706" />
-            <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>
-              Timing-Optimierer: Wann ist der ideale Tankzeitpunkt?
-            </strong>
-          </div>
-
-          <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.85rem' }}>
-            {timing.verdictText}
-          </p>
+          {outlook && <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginBottom: '0.75rem' }}>{outlook.text}</p>}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.6rem', fontSize: '0.75rem' }}>
-            <div style={{ background: '#FFFFFF', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-              <span style={{ color: '#64748B', display: 'block' }}>Optimale Uhrzeit heute</span>
-              <strong style={{ fontSize: '0.95rem', color: '#0F172A', display: 'block' }}>
-                {timing.optimalHourToday}
-              </strong>
-              <span className="num-mono" style={{ color: '#059669', fontWeight: 600 }}>
-                ~{timing.expectedOptimalPriceToday.toFixed(3)} € (-{timing.savingsVsNowCent} ct)
-              </span>
+            <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+              <span style={{ color: '#64748B', display: 'block' }}>Ankunft</span>
+              <strong style={{ fontSize: '0.95rem', color: '#0F172A', display: 'block' }}>{outlook ? `${outlook.arrivalTimeFormatted} Uhr (${outlook.driveTimeMin >= 60 ? `~${Math.floor(outlook.driveTimeMin / 60)} Std. ${outlook.driveTimeMin % 60} Min.` : `~${outlook.driveTimeMin} Min.`})` : '–'}</strong>
+              <span className="num-mono" style={{ color: '#64748B' }}>{outlook?.expectedArrivalPrice ? `erwartet ~${de(outlook.expectedArrivalPrice, 3)} €` : ''}</span>
             </div>
-
-            <div style={{ background: '#FFFFFF', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-              <span style={{ color: '#64748B', display: 'block' }}>Sparpotenzial Tankfüllung</span>
-              <strong className="num-mono" style={{ fontSize: '1.05rem', color: '#059669', display: 'block' }}>
-                +{timingSavingsEuro} €
-              </strong>
-              <span style={{ color: '#64748B' }}>bei {simLiters} Litern heute Abend</span>
-            </div>
-
-            <div style={{ background: '#FFFFFF', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-              <span style={{ color: '#64748B', display: 'block' }}>Günstigster Tag der Woche</span>
+            <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+              <span style={{ color: '#64748B', display: 'block' }}>Nächstes günstiges Fenster der Region</span>
               <strong style={{ fontSize: '0.95rem', color: '#0F172A', display: 'block' }}>
-                {timing.bestDayOfWeek}
+                {nextWindow ? describeWindowRange(nextWindow.start, nextWindow.end) : 'Keine Verbesserung erwartet'}
               </strong>
-              <span className="num-mono" style={{ color: '#64748B' }}>
-                ~{timing.expectedBestDayPrice.toFixed(3)} € erwartet
+              <span className="num-mono" style={{ color: '#059669', fontWeight: 600 }}>{nextWindow ? `${nextWindow.est > 0 ? '+' : ''}${de(nextWindow.est)} ct zum Tagesmittel` : ''}</span>
+            </div>
+            <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+              <span style={{ color: '#64748B', display: 'block' }}>24h-Tief laut Prognose</span>
+              <strong style={{ fontSize: '0.95rem', color: '#0F172A', display: 'block' }}>
+                {forecast ? (forecast.lowest.hoursAhead === 0 ? 'Jetzt' : `${describeWindowTime(forecast.lowest)} (~${de(forecast.lowest.price, 3)} €)`) : '–'}
+              </strong>
+              <span className="num-mono" style={{ color: forecastSavingsEuro > 0.5 ? '#059669' : '#64748B', fontWeight: 600 }}>
+                {forecast && forecast.potentialSavingsCent > 0.4 ? `bis zu ${de(forecastSavingsEuro, 2)} € bei ${simLiters} L` : 'kaum Sparpotenzial durch Warten'}
               </span>
             </div>
           </div>
         </div>
 
-        {/* 4. D3.js PREISVERLAUFS-CHART */}
+        {/* 3. Prognose */}
+        {forecast && (
+          <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '1.1rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.6rem' }}>
+              <Zap size={16} color="#D97706" />
+              <strong style={{ fontSize: '0.92rem', color: '#0F172A' }}>24-Stunden-Prognose für diese Station</strong>
+            </div>
+            <ForecastStrip forecast={forecast} compact />
+          </div>
+        )}
+
+        {/* 4. Echter Preisverlauf */}
         <div style={{ marginBottom: '1.25rem' }}>
-          <PriceTrendChart
-            history={station.history}
-            stationName={station.name}
-            fuelType={fuelType}
-            evaluation={evaluation}
-          />
+          <PriceTrendChart readings={readings} stationName={station.name} fuelType={fuelType} evaluation={evaluation} />
         </div>
 
-        {/* 5. TENSORFLOW.JS KI-EMPFEHLUNG */}
-        <div
-          style={{
-            background: score >= 70 ? '#ECFDF5' : '#F8FAFC',
-            border: `1px solid ${score >= 70 ? '#A7F3D0' : '#E2E8F0'}`,
-            borderRadius: '8px',
-            padding: '1rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.35rem' }}>
-            <Sparkles size={16} color={score >= 70 ? '#059669' : '#0F172A'} />
-            <strong style={{ fontSize: '0.88rem', color: '#0F172A' }}>
-              TensorFlow.js Score: {score}/100 • {mlPrediction?.recommendation}
-            </strong>
+        {/* 5. Einordnung */}
+        <div style={{ background: score >= 70 ? '#ECFDF5' : '#F8FAFC', border: `1px solid ${score >= 70 ? '#A7F3D0' : '#E2E8F0'}`, borderRadius: '8px', padding: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <Sparkles size={16} color={score >= 70 ? '#059669' : '#0F172A'} />
+              <strong style={{ fontSize: '0.88rem', color: '#0F172A' }}>Einordnung: {station.score?.label || 'Mittelfeld'} • Score {score}/100</strong>
+            </div>
+            <span style={{ fontSize: '0.72rem', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              <Database size={12} /> {readings.length === 1 ? '1 eigener Messwert' : `${readings.length} eigene Messwerte`}
+            </span>
           </div>
           <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
-            {mlPrediction?.reasoning}
+            {station.score?.reasons?.length
+              ? `${station.score.reasons.join(', ')}.`.replace(/^./, (c) => c.toUpperCase())
+              : 'Preislich im Mittelfeld der Region.'}
+            {evaluation?.hasHistory && Number.isFinite(evaluation.expectedNow)
+              ? ` Um diese Uhrzeit kostet sie üblicherweise ~${de(evaluation.expectedNow, 3)} € – jetzt ${evaluation.deltaCent > 0 ? '+' : ''}${de(evaluation.deltaCent)} ct (Schwankung ${evaluation.volatilityLevel.toLowerCase()}).`
+              : ' Für den Vergleich mit dem üblichen Preis dieser Station fehlen noch eigene Messwerte – die App sammelt sie bei jedem Öffnen.'}
           </p>
         </div>
-
       </div>
     </div>
   );

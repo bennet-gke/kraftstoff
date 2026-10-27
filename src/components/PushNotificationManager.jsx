@@ -1,366 +1,262 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Bell,
-  BellRing,
-  Smartphone,
-  Share,
-  PlusSquare,
-  CheckCircle,
-  AlertTriangle,
-  Send,
-  Volume2,
-  Workflow,
-  Copy,
-  Check,
-  Sparkles,
-} from 'lucide-react';
+import React, { useState } from 'react';
+import { Bell, BellRing, BellOff, Smartphone, Share, PlusSquare, CheckCircle, AlertTriangle, Send, Volume2, Workflow, Copy, Check, Sparkles, X, Info } from 'lucide-react';
 import { notificationService } from '../services/notificationService';
 import { dataService } from '../services/dataService';
 import { locationService } from '../services/locationService';
+import { fmtNum } from '../utils/format';
+import { useEscapeToClose } from './modalHooks';
 
-export default function PushNotificationManager({ isOpen, onClose }) {
-  const [permission, setPermission] = useState('default');
+/**
+ * Preisalarme: Mitteilungen erlauben und testen, Pause, Anleitung für das iPhone und
+ * Apple-Kurzbefehl für Abfragen bei geschlossener App. Wird nur geöffnet gerendert.
+ */
+export default function PushNotificationManager({ isOpen = true, onClose, settings = null, onPause, onResume }) {
+  const isIOS = notificationService.isIOS();
+  const standalone = notificationService.isStandalone();
+  const [permission, setPermission] = useState(() => notificationService.getPermission());
+  const [activeTab, setActiveTab] = useState(() => (isIOS && !standalone ? 'ios' : 'browser'));
   const [testSent, setTestSent] = useState(false);
-  const [activeTab, setActiveTab] = useState('browser'); // 'browser' | 'ios' | 'shortcuts'
   const [copiedUrl, setCopiedUrl] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && isOpen) {
-      setPermission(notificationService.getPermission());
-
-      const userAgent = window.navigator.userAgent.toLowerCase();
-      const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
-      if (isIosDevice) {
-        setActiveTab('ios');
-      }
-    }
-  }, [isOpen]);
+  const [message, setMessage] = useState(null);
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
+  const thresholdLabel = fmtNum(Number(settings?.alertThresholdCent) || 3, 1);
+  const pausedUntilMs = settings?.pausedUntil ? new Date(settings.pausedUntil).getTime() : 0;
+  const isPaused = dataService.isAlertsPaused();
+  const pausedUntilText = isPaused && pausedUntilMs ? new Date(pausedUntilMs).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
+
   const handleRequestPermission = async () => {
+    setMessage(null);
     try {
       const res = await notificationService.requestPermission();
       setPermission(res);
-      if (res === 'granted') {
-        notificationService.playAlertChime();
-      }
+      if (res === 'granted') notificationService.playAlertChime();
+      if (res === 'denied') setMessage({ type: 'warning', text: 'Mitteilungen wurden blockiert. Du kannst sie in den System- bzw. Browser-Einstellungen für diese Seite wieder erlauben.' });
     } catch (err) {
-      alert(`Hinweis: ${err.message}`);
+      setMessage({ type: 'warning', text: err.message });
     }
   };
 
-  const handleTriggerTest = () => {
+  const handleTriggerTest = async () => {
     if (permission !== 'granted') {
       handleRequestPermission();
       return;
     }
-
-    notificationService.sendNotification({
-      title: 'KRAFTSTOFF Alarm ⚡️ JET Tankstelle',
-      body: 'Diesel ist soeben auf 1,63⁹ € gefallen (4,2 ct unter Marktschnitt). Jetzt tanken!',
+    await notificationService.sendNotification({
+      title: 'Tankwart-Tipp (Test)',
+      body: `So sieht ein Preisalarm aus. Er kommt, wenn die günstigste Station mindestens ${thresholdLabel} ct unter ihrem üblichen Preis oder dem Regionsmedian liegt.`,
       tag: 'test-alarm',
-      playChime: true,
     });
-
     setTestSent(true);
     setTimeout(() => setTestSent(false), 3500);
   };
 
-  // Beispiel-URL für Apple Kurzbefehl / Shortcuts
+  // URL für Apple Kurzbefehle: günstigste Preise im aktiven Umkreis (nur mit eigenem Key)
+  const fuelForShortcut = settings?.fuelPreference || 'diesel';
   const activeLoc = locationService.getActiveLocation() || locationService.locations[0];
-  const creds = dataService.getCredentials();
-  const apiKey = creds.tankerkoenigApiKey || '00000000-0000-0000-0000-000000000002';
-  const shortcutApiUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${activeLoc?.lat || 52.52}&lng=${activeLoc?.lng || 13.41}&rad=5&sort=price&type=diesel&apikey=${apiKey}`;
+  const ownKey = dataService.getStoredKey();
+  const shortcutApiUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${Number(activeLoc?.lat || 52.52).toFixed(4)}&lng=${Number(activeLoc?.lng || 13.41).toFixed(4)}&rad=${Math.min(25, Math.round(activeLoc?.radiusKm || 5))}&sort=price&type=${fuelForShortcut}&apikey=${ownKey || 'DEIN-TANKERKOENIG-KEY'}`;
 
-  const handleCopyShortcutUrl = () => {
-    navigator.clipboard.writeText(shortcutApiUrl);
-    setCopiedUrl(true);
-    setTimeout(() => setCopiedUrl(false), 3000);
+  const handleCopyShortcutUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shortcutApiUrl);
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 3000);
+    } catch {
+      setMessage({ type: 'warning', text: 'Kopieren nicht möglich – bitte den Link markieren und manuell kopieren.' });
+    }
   };
+
+  const permissionBadge = permission === 'granted'
+    ? { cls: 'badge-favorable', icon: CheckCircle, text: 'Mitteilungen erlaubt' }
+    : permission === 'denied'
+      ? { cls: 'badge-unfavorable', icon: AlertTriangle, text: 'Blockiert' }
+      : permission === 'unsupported'
+        ? { cls: 'badge-gray', icon: Info, text: isIOS ? 'Erst als Home-Bildschirm-App' : 'Nicht unterstützt' }
+        : { cls: 'badge-neutral', icon: AlertTriangle, text: 'Noch nicht erlaubt' };
+  const PermIcon = permissionBadge.icon;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
-        
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ background: '#0F172A', color: '#FFFFFF', padding: '0.4rem', borderRadius: '8px' }}>
-              <BellRing size={18} />
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }} role="dialog" aria-modal="true" aria-label="Preisalarme">
+        <div className="modal-head">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+            <div className="modal-head-icon">
+              <BellRing size={17} />
             </div>
             <div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
-                Preisalarme & Benachrichtigungen
-              </h3>
-              <p style={{ fontSize: '0.76rem', color: '#64748B' }}>
-                Echtzeit-Mitteilungen bei Preistiefststand auf Mac, PC & iPhone
-              </p>
+              <h3>Preisalarme</h3>
+              <p>Hinweis mit Signalton, wenn es in deiner Gegend günstig wird</p>
             </div>
           </div>
-          
-          <button onClick={onClose} className="btn btn-secondary btn-sm">
-            Schließen
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Schließen">
+            <X size={20} />
           </button>
         </div>
 
-        {/* Tab-Navigation für Benachrichtigungsmethoden */}
-        <div className="nav-pill-group" style={{ marginBottom: '1.25rem', width: '100%' }}>
-          <button
-            className={`nav-pill-btn ${activeTab === 'browser' ? 'active' : ''}`}
-            onClick={() => setActiveTab('browser')}
-            style={{ flex: 1, justifyContent: 'center' }}
-          >
+        <div className="nav-pill-group" style={{ marginBottom: '1rem' }} role="tablist">
+          <button type="button" role="tab" aria-selected={activeTab === 'browser'} className={`nav-pill-btn ${activeTab === 'browser' ? 'active' : ''}`} onClick={() => setActiveTab('browser')} style={{ flex: 1, justifyContent: 'center' }}>
             <Bell size={13} />
-            <span>Browser & PWA</span>
+            <span>Alarme</span>
           </button>
-          <button
-            className={`nav-pill-btn ${activeTab === 'ios' ? 'active' : ''}`}
-            onClick={() => setActiveTab('ios')}
-            style={{ flex: 1, justifyContent: 'center' }}
-          >
+          <button type="button" role="tab" aria-selected={activeTab === 'ios'} className={`nav-pill-btn ${activeTab === 'ios' ? 'active' : ''}`} onClick={() => setActiveTab('ios')} style={{ flex: 1, justifyContent: 'center' }}>
             <Smartphone size={13} />
-            <span>iPhone Safari Guide</span>
+            <span>iPhone</span>
           </button>
-          <button
-            className={`nav-pill-btn ${activeTab === 'shortcuts' ? 'active' : ''}`}
-            onClick={() => setActiveTab('shortcuts')}
-            style={{ flex: 1, justifyContent: 'center' }}
-          >
+          <button type="button" role="tab" aria-selected={activeTab === 'shortcuts'} className={`nav-pill-btn ${activeTab === 'shortcuts' ? 'active' : ''}`} onClick={() => setActiveTab('shortcuts')} style={{ flex: 1, justifyContent: 'center' }}>
             <Workflow size={13} />
-            <span>Apple Kurzbefehle</span>
+            <span>Kurzbefehl</span>
           </button>
         </div>
 
-        {/* TAB 1: BROWSER & DIREKT-ALARM */}
-        {activeTab === 'browser' && (
-          <div>
-            {/* Status-Karte */}
-            <div
-              style={{
-                border: '1px solid #E2E8F0',
-                borderRadius: '10px',
-                padding: '1rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '1rem',
-                background: '#FFFFFF',
-                flexWrap: 'wrap',
-                gap: '0.75rem',
-              }}
-            >
-              <div>
-                <span style={{ fontSize: '0.72rem', color: '#94A3B8', textTransform: 'uppercase', fontWeight: 600 }}>
-                  System-Berechtigung
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem' }}>
-                  <span
-                    className={`badge ${
-                      permission === 'granted'
-                        ? 'badge-favorable'
-                        : permission === 'denied'
-                        ? 'badge-unfavorable'
-                        : 'badge-neutral'
-                    }`}
-                  >
-                    {permission === 'granted' ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
-                    <span>
-                      {permission === 'granted'
-                        ? 'Mitteilungen sind aktiv'
-                        : permission === 'denied'
-                        ? 'Vom Browser blockiert'
-                        : 'Noch nicht angefordert'}
-                    </span>
-                  </span>
-                </div>
-              </div>
+        {message && (
+          <div className={`inline-msg is-${message.type}`} style={{ marginBottom: '0.85rem' }} role="status">
+            <AlertTriangle size={14} />
+            <span>{message.text}</span>
+          </div>
+        )}
 
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                {permission !== 'granted' ? (
-                  <button className="btn btn-primary btn-sm" onClick={handleRequestPermission}>
+        {activeTab === 'browser' && (
+          <div className="panel-stack is-tight">
+            <div className="notify-status">
+              <div>
+                <span className="notify-status-label">Mitteilungen</span>
+                <span className={`badge ${permissionBadge.cls}`}>
+                  <PermIcon size={12} />
+                  <span>{permissionBadge.text}</span>
+                </span>
+              </div>
+              <div className="drawer-actions">
+                {permission === 'granted' ? (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => notificationService.playAlertChime()}>
+                    <Volume2 size={13} />
+                    <span>Ton testen</span>
+                  </button>
+                ) : permission !== 'unsupported' ? (
+                  <button type="button" className="btn btn-primary btn-sm" onClick={handleRequestPermission} disabled={permission === 'denied'}>
                     <Bell size={13} />
-                    <span>Jetzt aktivieren</span>
+                    <span>Erlauben</span>
                   </button>
                 ) : (
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => notificationService.playAlertChime()}
-                    title="Gong probehören"
-                  >
-                    <Volume2 size={13} />
-                    <span>Signalton testen</span>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setActiveTab('ios')}>
+                    <Smartphone size={13} />
+                    <span>So geht’s</span>
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Testalarm Box */}
-            <div
-              style={{
-                background: '#F8FAFC',
-                border: '1px solid #E2E8F0',
-                borderRadius: '10px',
-                padding: '1rem',
-                marginBottom: '1.25rem',
-              }}
-            >
-              <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.35rem' }}>
-                Test-Preisalarm auslösen
-              </h4>
-              <p style={{ fontSize: '0.76rem', color: '#64748B', lineHeight: 1.5, marginBottom: '0.85rem' }}>
-                Löse eine echte Banner-Mitteilung inklusive akustischem Chime-Gong aus, um das Benachrichtigungsverhalten auf deinem Mac oder iPhone zu prüfen:
-              </p>
-
-              <button
-                className="btn btn-primary"
-                onClick={handleTriggerTest}
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                <Send size={14} />
-                <span>{testSent ? '✓ Banner & Ton abgespielt!' : 'Mitteilungs-Banner jetzt testen'}</span>
-              </button>
-            </div>
-
-            {/* Funktionsweise */}
-            <div style={{ fontSize: '0.74rem', color: '#64748B', background: '#FFFFFF', border: '1px solid #F1F5F9', borderRadius: '8px', padding: '0.85rem' }}>
-              <div style={{ fontWeight: 600, color: '#0F172A', marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Sparkles size={13} color="#059669" />
-                <span>Automatischer Live-Preiswächter</span>
-              </div>
-              Sobald KRAFTSTOFF neue Zapfsäulenpreise abruft und eine Tankstelle mindestens <strong>3,0 Cent unter dem Marktschnitt</strong> liegt oder den Tages-Tiefstwert erreicht, ertönt der Signalton und ein Mitteilungsbanner erscheint automatisch.
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: IPHONE SAFARI ANLEITUNG */}
-        {activeTab === 'ios' && (
-          <div>
-            <div
-              style={{
-                background: '#EFF6FF',
-                border: '1px solid #BFDBFE',
-                borderRadius: '10px',
-                padding: '1rem',
-                marginBottom: '1rem',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.4rem' }}>
-                <Smartphone size={16} color="#1D4ED8" />
-                <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E3A8A' }}>
-                  Apple iOS Regel: "Zum Home-Bildschirm"
-                </h4>
-              </div>
-              <p style={{ fontSize: '0.78rem', color: '#1E40AF', lineHeight: 1.5 }}>
-                Apple erlaubt auf dem iPhone (seit iOS 16.4) Web-Mitteilungen nur dann, wenn die App als PWA auf dem Home-Bildschirm abgelegt wurde:
-              </p>
-            </div>
-
-            {/* 3 Schritte */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem' }}>
-                <div style={{ background: '#0F172A', color: '#FFFFFF', width: '22px', height: '22px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>
-                  1
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                    Im Safari-Browser unten auf "Teilen" tippen
-                  </div>
-                  <div style={{ fontSize: '0.74rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.15rem' }}>
-                    <span>Das Viereck mit dem Pfeil nach oben</span>
-                    <Share size={13} color="#2563EB" />
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem' }}>
-                <div style={{ background: '#0F172A', color: '#FFFFFF', width: '22px', height: '22px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>
-                  2
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                    "Zum Home-Bildschirm" auswählen
-                  </div>
-                  <div style={{ fontSize: '0.74rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.15rem' }}>
-                    <span>Erzeugt das KRAFTSTOFF-App Icon auf deinem iPhone</span>
-                    <PlusSquare size={13} color="#059669" />
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem' }}>
-                <div style={{ background: '#0F172A', color: '#FFFFFF', width: '22px', height: '22px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, flexShrink: 0 }}>
-                  3
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0F172A' }}>
-                    App vom Home-Screen öffnen & "Erlauben" bestätigen
-                  </div>
-                  <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '0.15rem' }}>
-                    iOS behandelt KRAFTSTOFF jetzt wie eine native App aus dem App Store und liefert Sperrbildschirm-Mitteilungen zuverlässig aus!
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: APPLE KURZBEFEHLE (100% Nativ & Hintergrund) */}
-        {activeTab === 'shortcuts' && (
-          <div>
-            <div
-              style={{
-                background: '#F0FDF4',
-                border: '1px solid #BBF7D0',
-                borderRadius: '10px',
-                padding: '1rem',
-                marginBottom: '1rem',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.35rem' }}>
-                <Workflow size={16} color="#15803D" />
-                <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: '#166534' }}>
-                  Die 0€-Serverlose Geheimwaffe: Apple Kurzbefehle
-                </h4>
-              </div>
-              <p style={{ fontSize: '0.78rem', color: '#14532D', lineHeight: 1.5 }}>
-                Wenn die Web-App komplett geschlossen ist, kann Apple iOS trotzdem vollautomatisch jeden Tag um 17:30 Uhr (statistisch günstigste Tankzeit) deine Tankstellen abfragen und dir eine Benachrichtigung aufs iPhone schicken – ganz ohne eigenen Server!
-              </p>
-            </div>
-
-            <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.4rem' }}>
-                Deine fertige Tankerkönig API-Abfrage für iOS Kurzbefehle:
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#F8FAFC', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-                <span className="num-mono" style={{ fontSize: '0.7rem', color: '#334155', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {shortcutApiUrl}
+            <div className="notify-status">
+              <div>
+                <span className="notify-status-label">Pause</span>
+                <span className={`badge ${isPaused ? 'badge-neutral' : 'badge-gray'}`}>
+                  {isPaused ? <BellOff size={12} /> : <Bell size={12} />}
+                  <span>{isPaused ? `Pausiert bis ${pausedUntilText} Uhr` : 'Alarme aktiv'}</span>
                 </span>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleCopyShortcutUrl}
-                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.72rem', flexShrink: 0 }}
-                >
+              </div>
+              <div className="drawer-actions">
+                {isPaused ? (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={onResume}>
+                    <Bell size={13} />
+                    <span>Fortsetzen</span>
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={onPause}>
+                    <BellOff size={13} />
+                    <span>30 Min. pausieren</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <button type="button" className="btn btn-primary" onClick={handleTriggerTest} disabled={permission === 'unsupported' || permission === 'denied'} style={{ width: '100%' }}>
+              {testSent ? <Check size={14} /> : <Send size={14} />}
+              <span>{testSent ? 'Test-Mitteilung gesendet' : 'Test-Mitteilung senden'}</span>
+            </button>
+
+            <div className="notify-explainer">
+              <div className="notify-explainer-title">
+                <Sparkles size={13} color="#059669" />
+                <span>So funktioniert der Preiswächter</span>
+              </div>
+              <p>
+                Bei jedem Abruf prüft KRAFTSTOFF, ob die günstigste geöffnete Tankstelle mindestens <strong>{thresholdLabel} ct</strong> unter ihrem üblichen Preis für diese Uhrzeit oder unter dem Regionsmedian liegt. Dann gibt es Signalton und Mitteilung – pro Tankstelle höchstens einmal pro Stunde.
+              </p>
+              <p>
+                <strong>Wichtig:</strong> Das klappt nur, solange die App geöffnet ist (auf dem Mac auch im Hintergrund-Tab). Für Hinweise bei geschlossener App gibt es den Kurzbefehl-Trick im dritten Reiter.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'ios' && (
+          <div className="panel-stack is-tight">
+            <div className="inline-msg is-info">
+              <Smartphone size={15} />
+              <span>
+                {standalone
+                  ? 'KRAFTSTOFF läuft bereits als Home-Bildschirm-App – Mitteilungen kannst du im Reiter „Alarme“ erlauben.'
+                  : 'Apple erlaubt Mitteilungen von Web-Apps nur, wenn sie auf dem Home-Bildschirm liegen (ab iOS 16.4):'}
+              </span>
+            </div>
+            {[
+              { n: 1, title: 'In Safari auf „Teilen“ tippen', sub: 'Das Viereck mit dem Pfeil nach oben', icon: <Share size={13} color="#2563EB" /> },
+              { n: 2, title: '„Zum Home-Bildschirm“ wählen', sub: 'Legt das KRAFTSTOFF-Symbol an', icon: <PlusSquare size={13} color="#059669" /> },
+              { n: 3, title: 'App vom Home-Bildschirm öffnen', sub: 'Dann hier unter „Alarme“ auf „Erlauben“ tippen und bestätigen' },
+            ].map((step) => (
+              <div key={step.n} className="step-row">
+                <span className="step-num">{step.n}</span>
+                <div>
+                  <strong>{step.title}</strong>
+                  <span>{step.sub} {step.icon}</span>
+                </div>
+              </div>
+            ))}
+            <p className="settings-note">Der Signalton funktioniert auf dem iPhone, nachdem du einmal irgendwo in die App getippt hast, und nur bei ausgeschaltetem Stummschalter.</p>
+          </div>
+        )}
+
+        {activeTab === 'shortcuts' && (
+          <div className="panel-stack is-tight">
+            <div className="inline-msg is-success">
+              <Workflow size={15} />
+              <span>Die Kurzbefehle-App kann auch bei geschlossener App zu einer festen Uhrzeit (z. B. abends) die günstigsten Tankstellen abfragen und dir eine Mitteilung schicken – ohne eigenen Server.</span>
+            </div>
+
+            {!ownKey && (
+              <div className="inline-msg is-warning">
+                <AlertTriangle size={14} />
+                <span>Dafür brauchst du einen eigenen Tankerkönig-Key (Einstellungen). Im Link steht sonst ein Platzhalter.</span>
+              </div>
+            )}
+
+            <div className="field">
+              <span className="field-label">Abfrage-Link für {activeLoc?.name || 'deinen Standort'} ({fuelForShortcut.toUpperCase()})</span>
+              <div className="input-with-btn">
+                <input className="text-input is-mono" readOnly value={shortcutApiUrl} onFocus={(e) => e.target.select()} aria-label="Abfrage-Link" />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={handleCopyShortcutUrl}>
                   {copiedUrl ? <Check size={12} color="#059669" /> : <Copy size={12} />}
-                  <span>{copiedUrl ? 'Kopiert!' : 'Kopieren'}</span>
+                  <span>{copiedUrl ? 'Kopiert' : 'Kopieren'}</span>
                 </button>
               </div>
+              <span className="field-hint">Der Link enthält deinen persönlichen Key – nicht öffentlich teilen.</span>
             </div>
 
-            {/* Schritt-für-Schritt */}
-            <div style={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.6 }}>
-              <strong>In 2 Minuten in der Apple "Kurzbefehle"-App einrichten:</strong>
+            <div className="settings-note" style={{ lineHeight: 1.6 }}>
+              <strong style={{ color: '#0F172A' }}>Einrichten in der Kurzbefehle-App:</strong>
               <ol style={{ paddingLeft: '1.2rem', marginTop: '0.35rem' }}>
-                <li>Öffne die vorinstallierte <strong>Kurzbefehle-App</strong> auf deinem iPhone oder Mac.</li>
-                <li>Tippe unten auf <strong>"Automation"</strong> ➔ <strong>"Neue Automation"</strong>.</li>
-                <li>Wähle <strong>"Tageszeit"</strong> (z.B. täglich 17:30 Uhr oder wenn du Feierabend hast).</li>
-                <li>Füge die Aktion <strong>"Inhalte von URL abrufen"</strong> hinzu (mit der oben kopierten URL).</li>
-                <li>Füge die Aktion <strong>"Mitteilung anzeigen"</strong> hinzu. Fertig!</li>
+                <li>„Automation“ → „Neue Automation“ → „Tageszeit“ (z. B. täglich 19:00).</li>
+                <li>Aktion „Inhalte von URL abrufen“ mit dem kopierten Link.</li>
+                <li>Aktion „Wörterbuchwert abrufen“: Schlüssel <code>stations</code>.</li>
+                <li>Aktion „Objekt aus Liste abrufen“: erstes Objekt.</li>
+                <li>Zwei Mal „Wörterbuchwert abrufen“: <code>name</code> und <code>price</code>.</li>
+                <li>Aktion „Mitteilung anzeigen“ mit Name und Preis – fertig.</li>
               </ol>
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

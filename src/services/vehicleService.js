@@ -8,37 +8,34 @@
  * - Aktuellem Füllstand (%) zur Berechnung der benötigten Tankmenge
  */
 
+import { num, neededLitersFor } from '../engine/vehicleMath';
+
+export { neededLitersFor };
+
 const STORAGE_KEY = 'kraftstoff_user_vehicles';
 const ACTIVE_VEHICLE_KEY = 'kraftstoff_active_vehicle_id';
 
+/** Startfahrzeug bei einer Neuinstallation – wird in der Garage an das eigene Auto angepasst. */
 export const INITIAL_VEHICLES = [
   {
-    id: 'veh-golf-tdi',
-    name: 'VW Golf 2.0 TDI',
-    brand: 'Volkswagen',
+    id: 'veh-default',
+    name: 'Mein Auto',
+    brand: 'Auto',
     fuelType: 'diesel',
-    consumptionL100km: 5.4, // 5.4 L / 100km
-    tankCapacityL: 50,       // 50 Liter Tank
-    currentFuelLevelPct: 15, // 15% Restinhalt -> 42.5 L benötigt
-  },
-  {
-    id: 'veh-bmw-3er',
-    name: 'BMW 320i Touring',
-    brand: 'BMW',
-    fuelType: 'e10',
-    consumptionL100km: 7.2, // 7.2 L / 100km
-    tankCapacityL: 59,       // 59 Liter Tank
-    currentFuelLevelPct: 20, // 20% Restinhalt -> 47.2 L benötigt
-  },
-  {
-    id: 'veh-audi-a4',
-    name: 'Audi A4 2.0 TFSI',
-    brand: 'Audi',
-    fuelType: 'e5',
-    consumptionL100km: 7.8,
-    tankCapacityL: 54,
+    consumptionL100km: 6.0,
+    tankCapacityL: 50,
     currentFuelLevelPct: 25,
   },
+];
+
+/**
+ * Beispielfahrzeuge früherer Versionen. Bleiben als "unveränderte Standardwerte" bekannt, damit sie bei der
+ * Synchronisation nie gelöschte Fahrzeuge eines anderen Geräts zurückholen.
+ */
+export const LEGACY_DEFAULT_VEHICLES = [
+  { id: 'veh-golf-tdi', name: 'VW Golf 2.0 TDI', brand: 'Volkswagen', fuelType: 'diesel', consumptionL100km: 5.4, tankCapacityL: 50, currentFuelLevelPct: 15 },
+  { id: 'veh-bmw-3er', name: 'BMW 320i Touring', brand: 'BMW', fuelType: 'e10', consumptionL100km: 7.2, tankCapacityL: 59, currentFuelLevelPct: 20 },
+  { id: 'veh-audi-a4', name: 'Audi A4 2.0 TFSI', brand: 'Audi', fuelType: 'e5', consumptionL100km: 7.8, tankCapacityL: 54, currentFuelLevelPct: 25 },
 ];
 
 class VehicleService {
@@ -50,7 +47,8 @@ class VehicleService {
   loadVehicles() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) return JSON.parse(stored);
+      const parsed = stored ? JSON.parse(stored) : null;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch {}
     return [...INITIAL_VEHICLES];
   }
@@ -60,7 +58,7 @@ class VehicleService {
       const stored = localStorage.getItem(ACTIVE_VEHICLE_KEY);
       if (stored && this.vehicles.some((v) => v.id === stored)) return stored;
     } catch {}
-    return this.vehicles[0]?.id || 'veh-golf-tdi';
+    return this.vehicles[0]?.id || INITIAL_VEHICLES[0].id;
   }
 
   saveVehicles(newVehicles) {
@@ -93,9 +91,9 @@ class VehicleService {
       name: vehicleData.name || 'Neues Fahrzeug',
       brand: vehicleData.brand || 'Auto',
       fuelType: vehicleData.fuelType || 'diesel',
-      consumptionL100km: parseFloat(vehicleData.consumptionL100km) || 6.5,
-      tankCapacityL: parseFloat(vehicleData.tankCapacityL) || 50,
-      currentFuelLevelPct: parseFloat(vehicleData.currentFuelLevelPct) || 20,
+      consumptionL100km: Math.max(1, num(vehicleData.consumptionL100km, 6.5)),
+      tankCapacityL: Math.max(5, num(vehicleData.tankCapacityL, 50)),
+      currentFuelLevelPct: Math.min(100, Math.max(0, num(vehicleData.currentFuelLevelPct, 20))),
     };
     const updated = [...this.vehicles, newVehicle];
     this.saveVehicles(updated);
@@ -123,9 +121,7 @@ class VehicleService {
    * Berechnet die zu tankende Litermenge basierend auf Tankgröße und Füllstand.
    */
   getNeededLiters(vehicle = this.getActiveVehicle()) {
-    if (!vehicle) return 40;
-    const missingPct = Math.max(0, 100 - (vehicle.currentFuelLevelPct || 20)) / 100;
-    return parseFloat(((vehicle.tankCapacityL || 50) * missingPct).toFixed(1));
+    return neededLitersFor(vehicle);
   }
 }
 

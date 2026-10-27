@@ -1,9 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import { MapPin, Navigation, Plus, Trash2, X, Download, Search, LocateFixed, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { locationService } from '../services/locationService';
-import { routeService } from '../services/routeService';
-import { backupService } from '../services/backupService';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { MapPin, Plus, Trash2, X, Download, Search, LocateFixed, RefreshCw, AlertCircle, CheckCircle2, Pencil, Check, Route as RouteIcon, Bookmark, AlertTriangle } from 'lucide-react';
+import { locationService, getCurrentPosition } from '../services/locationService';
+import { routeService, CORRIDOR_OPTIONS, DEFAULT_CORRIDOR_KM } from '../services/routeService';
+import { backupService, describeSaveResult } from '../services/backupService';
+import { fmtNum, fmtDuration } from '../utils/format';
+import { useEscapeToClose } from './modalHooks';
 
+const RADIUS_PRESETS = [3, 5, 10, 15, 25];
+
+/** Zwei Punkte gelten als identisch, wenn sie weniger als ~50 m auseinander liegen. */
+function isSamePlace(a, b) {
+  return !!a && !!b && Math.abs(a.lat - b.lat) < 0.0005 && Math.abs(a.lng - b.lng) < 0.0005;
+}
+
+function Msg({ msg }) {
+  if (!msg) return null;
+  return (
+    <div className={`inline-msg is-${msg.type}`} role={msg.type === 'error' ? 'alert' : 'status'}>
+      {msg.type === 'error' ? <AlertCircle size={14} /> : msg.type === 'warning' ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+      <span>{msg.text}</span>
+    </div>
+  );
+}
+
+/** Eintrag mit Umbenennen und Löschen (mit Rückfrage). */
+function ManageItem({ title, sub, meta, isActive, activeLabel, badge, onActivate, activateLabel, onRename, onDelete, canDelete = true, extra, children }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(title);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const save = () => {
+    const n = name.trim();
+    if (n && n !== title) onRename(n);
+    setEditing(false);
+  };
+
+  return (
+    <div className={`manage-item ${isActive ? 'is-active' : ''}`}>
+      <div className="manage-item-head">
+        <div style={{ minWidth: 0, flex: 1 }}>
+          {editing ? (
+            <form
+              className="manage-item-rename"
+              onSubmit={(e) => {
+                e.preventDefault();
+                save();
+              }}
+            >
+              <input className="text-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus aria-label="Neuer Name" />
+              <button type="submit" className="icon-btn" aria-label="Namen speichern"><Check size={15} /></button>
+              <button type="button" className="icon-btn" aria-label="Abbrechen" onClick={() => { setName(title); setEditing(false); }}><X size={15} /></button>
+            </form>
+          ) : (
+            <div className="manage-item-title">
+              {badge && <span className="option-row-badge">{badge}</span>}
+              <span>{title}</span>
+              {isActive && <span className="badge badge-favorable" style={{ fontSize: '0.64rem', padding: '0.1rem 0.45rem' }}>{activeLabel || 'Aktiv'}</span>}
+            </div>
+          )}
+          {sub && <div className="manage-item-sub">{sub}</div>}
+          {meta && <div className="manage-item-meta">{meta}</div>}
+        </div>
+        {!editing && (
+          <div className="manage-item-actions">
+            {!isActive && onActivate && (
+              <button type="button" className="btn btn-secondary btn-sm" onClick={onActivate}>{activateLabel || 'Anzeigen'}</button>
+            )}
+            {extra}
+            {onRename && (
+              <button type="button" className="icon-btn" onClick={() => { setName(title); setEditing(true); }} aria-label={`${title} umbenennen`} title="Umbenennen">
+                <Pencil size={14} />
+              </button>
+            )}
+            {canDelete && onDelete && (
+              <button type="button" className="icon-btn is-danger" onClick={() => setConfirmDelete(true)} aria-label={`${title} löschen`} title="Löschen">
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {confirmDelete && (
+        <div className="inline-confirm">
+          <span>„{title}“ löschen?</span>
+          <button type="button" className="btn btn-sm btn-danger" onClick={() => { setConfirmDelete(false); onDelete(); }}>Löschen</button>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setConfirmDelete(false)}>Abbrechen</button>
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Orte & Routen verwalten: Orte per Adresse, GPS oder Koordinaten anlegen, Radius je Ort,
+ * feste Routen (z. B. Arbeitsweg) als Straßenroute berechnen und speichern.
+ */
 export default function LocationRouteModal({
   isOpen,
   onClose,
@@ -11,1043 +103,520 @@ export default function LocationRouteModal({
   activeLocationId,
   onSelectLocation,
   onUpdateLocations,
+  onUpdateRadius,
   routes = [],
   activeRouteId,
   onSelectRoute,
   onUpdateRoutes,
+  initialTab = 'locations',
 }) {
-  const [modalTab, setModalTab] = useState('locations'); // 'locations' | 'routes'
+  const [tab, setTab] = useState(initialTab);
+  const [footerMsg, setFooterMsg] = useState(null);
+  useEscapeToClose(isOpen, onClose);
 
-  // Standort Formular Zustand
-  const [locInputMode, setLocInputMode] = useState('address'); // 'address' | 'coords' | 'gps'
-  const [newLocName, setNewLocName] = useState('');
-  const [newLocAddress, setNewLocAddress] = useState('');
-  const [newLocLat, setNewLocLat] = useState('');
-  const [newLocLng, setNewLocLng] = useState('');
-  const [newLocRadius, setNewLocRadius] = useState('6');
-  const [isGeocoding, setIsGeocoding] = useState(false);
-  const [geoFeedback, setGeoFeedback] = useState(null);
-  const [detectedCoords, setDetectedCoords] = useState(null);
+  // ---------------------------------------------------------------- Orte
+  const [locName, setLocName] = useState('');
+  const [locQuery, setLocQuery] = useState('');
+  const [coordsMode, setCoordsMode] = useState(false);
+  const [locLat, setLocLat] = useState('');
+  const [locLng, setLocLng] = useState('');
+  const [locRadius, setLocRadius] = useState(5);
+  const [found, setFound] = useState(null); // { lat, lng, label, shortName }
+  const [locBusy, setLocBusy] = useState(false);
+  const [locMsg, setLocMsg] = useState(null);
 
-  // Routen Formular Zustand
-  const [newRouteName, setNewRouteName] = useState('');
-  const [newRouteDesc, setNewRouteDesc] = useState('');
-  const [newRouteCorridor, setNewRouteCorridor] = useState('2.5');
-  const [startType, setStartType] = useState(locations[0]?.id || 'custom');
-  const [customStartQuery, setCustomStartQuery] = useState('');
-  const [endType, setEndType] = useState(locations[1]?.id || locations[0]?.id || 'custom');
-  const [customEndQuery, setCustomEndQuery] = useState('');
-  const [isCalculatingOsm, setIsCalculatingOsm] = useState(false);
-  const [osmRoutePreview, setOsmRoutePreview] = useState(null);
-  const [autoSyncICloud, setAutoSyncICloud] = useState(true);
-  const [routeToast, setRouteToast] = useState(null); // { type: 'success' | 'error', message: string }
+  const activeLocation = locations.find((l) => l.id === activeLocationId) || null;
 
-  // Stelle sicher, dass startType & endType stets mit den tatsächlich vorhandenen Orten übereinstimmen
-  useEffect(() => {
-    const safeLocs = Array.isArray(locations) && locations.length > 0 ? locations : [];
-    if (safeLocs.length > 0) {
-      if (startType !== 'custom' && !safeLocs.some((l) => l.id === startType)) {
-        setStartType(safeLocs[0].id);
-      }
-      if (endType !== 'custom' && !safeLocs.some((l) => l.id === endType)) {
-        setEndType(safeLocs[1]?.id || safeLocs[0].id);
-      }
-    }
-  }, [locations, startType, endType]);
-
-  // 1. GPS Standort live abrufen mit automatischer Adress-Rückauflösung
-  const handleGetGpsPosition = () => {
-    if (!navigator.geolocation) {
-      setGeoFeedback({ success: false, message: 'GPS wird von diesem Browser nicht unterstützt.' });
-      return;
-    }
-    setIsGeocoding(true);
-    setGeoFeedback(null);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const lat = parseFloat(Number(pos.coords.latitude || 0).toFixed(6));
-          const lng = parseFloat(Number(pos.coords.longitude || 0).toFixed(6));
-          setNewLocLat(lat.toString());
-          setNewLocLng(lng.toString());
-          const rev = await locationService.reverseGeocode(lat, lng);
-          if (!newLocName.trim()) setNewLocName(`GPS: ${rev.shortName}`);
-          setNewLocAddress(rev.displayName);
-          setDetectedCoords({ lat, lng, displayName: rev.displayName });
-          setIsGeocoding(false);
-          setGeoFeedback({ success: true, message: `✓ GPS ermittelt: ${rev.shortName} (${lat}, ${lng})` });
-        } catch {
-          setIsGeocoding(false);
-        }
-      },
-      (err) => {
-        setIsGeocoding(false);
-        setGeoFeedback({ success: false, message: `GPS-Fehler: ${err.message}` });
-      },
-      { timeout: 10000, enableHighAccuracy: true }
-    );
-  };
-
-  // 2. OSM Nominatim Geocoding Test
-  const handleTestGeocode = async () => {
-    if (!newLocAddress.trim()) return;
-    setIsGeocoding(true);
-    setGeoFeedback(null);
+  const handleSearch = async () => {
+    const q = locQuery.trim();
+    if (!q) return;
+    setLocBusy(true);
+    setLocMsg(null);
     try {
-      const geo = await locationService.geocodeAddress(newLocAddress);
+      const geo = await locationService.geocodeAddress(q, { bias: activeLocation });
       if (geo) {
-        setDetectedCoords(geo);
-        setNewLocLat(geo.lat.toString());
-        setNewLocLng(geo.lng.toString());
-        setGeoFeedback({
-          success: true,
-          message: `Gefunden: ${geo.displayName.slice(0, 50)}... (${Number(geo.lat || 0).toFixed(4)}, ${Number(geo.lng || 0).toFixed(4)})`,
-        });
+        setFound({ lat: geo.lat, lng: geo.lng, label: geo.displayName || q, shortName: q });
       } else {
-        setGeoFeedback({ success: false, message: 'Adresse nicht gefunden. Bitte prüfen oder Koordinaten direkt eingeben.' });
+        setFound(null);
+        setLocMsg({ type: 'error', text: 'Adresse nicht gefunden. Prüfe die Schreibweise oder gib Koordinaten ein.' });
       }
     } catch (e) {
-      setGeoFeedback({ success: false, message: `Geocoding-Fehler: ${e.message}` });
+      setLocMsg({ type: 'error', text: `Suche fehlgeschlagen: ${e.message}` });
     } finally {
-      setIsGeocoding(false);
+      setLocBusy(false);
     }
   };
 
-  // 3. Standort speichern
+  const handleGps = async () => {
+    setLocBusy(true);
+    setLocMsg(null);
+    try {
+      const pos = await getCurrentPosition({ timeoutMs: 10000 });
+      let label = `${fmtNum(pos.lat, 5)}, ${fmtNum(pos.lng, 5)}`;
+      let shortName = 'Mein Standort';
+      try {
+        const rev = await locationService.reverseGeocode(pos.lat, pos.lng);
+        if (rev?.displayName) label = rev.displayName;
+        if (rev?.shortName) shortName = rev.shortName;
+      } catch {}
+      setCoordsMode(false);
+      setFound({ lat: pos.lat, lng: pos.lng, label, shortName });
+      setLocQuery(shortName);
+    } catch (e) {
+      setLocMsg({ type: 'error', text: e.message });
+    } finally {
+      setLocBusy(false);
+    }
+  };
+
   const handleAddLocation = async (e) => {
     e.preventDefault();
-    if (!newLocName.trim()) return;
-
-    setIsGeocoding(true);
-    setGeoFeedback(null);
-
+    setLocBusy(true);
+    setLocMsg(null);
     try {
-      let lat = parseFloat(newLocLat);
-      let lng = parseFloat(newLocLng);
-      let address = newLocAddress;
-
-      // Falls Adressmodus und Koordinaten noch nicht ermittelt:
-      if ((isNaN(lat) || isNaN(lng)) && locInputMode === 'address' && address) {
-        const geo = await locationService.geocodeAddress(address);
-        if (geo) {
-          lat = geo.lat;
-          lng = geo.lng;
+      let point = null;
+      if (coordsMode) {
+        const lat = parseFloat(String(locLat).replace(',', '.'));
+        const lng = parseFloat(String(locLng).replace(',', '.'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+          throw new Error('Bitte gültige Koordinaten eingeben (z. B. 52,5200 und 13,4050).');
         }
-      }
-
-      const newLoc = await locationService.addLocation({
-        name: newLocName,
-        address: address || `${Number(lat || 0).toFixed(4)}, ${Number(lng || 0).toFixed(4)}`,
-        lat,
-        lng,
-        radiusKm: parseFloat(newLocRadius) || 5.0,
-      });
-
-      onUpdateLocations(locationService.locations);
-      onSelectLocation(newLoc.id, newLoc);
-      setNewLocName('');
-      setNewLocAddress('');
-      setNewLocLat('');
-      setNewLocLng('');
-      setDetectedCoords(null);
-
-      if (autoSyncICloud) {
-        setTimeout(async () => {
-          try {
-            const res = await backupService.directSyncToICloud();
-            setGeoFeedback({
-              success: true,
-              message: res.method === 'direct-file'
-                ? `✓ Standort "${newLoc.name}" (${newLoc.lat}, ${newLoc.lng}) angelegt & in iCloud gesichert!`
-                : `✓ Standort "${newLoc.name}" erfolgreich angelegt!`,
-            });
-          } catch {
-            setGeoFeedback({ success: true, message: `Standort "${newLoc.name}" angelegt!` });
-          }
-          setTimeout(() => setGeoFeedback(null), 4000);
-        }, 150);
+        point = { lat, lng, label: locQuery.trim() || `${fmtNum(lat, 4)}, ${fmtNum(lng, 4)}`, shortName: '' };
+      } else if (found) {
+        point = found;
+      } else if (locQuery.trim()) {
+        const geo = await locationService.geocodeAddress(locQuery.trim(), { bias: activeLocation });
+        if (!geo) throw new Error('Adresse nicht gefunden. Prüfe die Schreibweise oder gib Koordinaten ein.');
+        point = { lat: geo.lat, lng: geo.lng, label: geo.displayName || locQuery.trim(), shortName: locQuery.trim() };
       } else {
-        setGeoFeedback({
-          success: true,
-          message: `Standort "${newLoc.name}" (${newLoc.lat}, ${newLoc.lng}) angelegt!`,
-        });
-        setTimeout(() => setGeoFeedback(null), 4000);
+        throw new Error('Bitte eine Adresse eingeben, „Mein Standort“ nutzen oder Koordinaten angeben.');
       }
+      const name = locName.trim() || point.shortName || locQuery.trim() || 'Neuer Ort';
+      const newLoc = await locationService.addLocation({
+        name,
+        address: point.label,
+        lat: point.lat,
+        lng: point.lng,
+        radiusKm: locRadius,
+      });
+      onUpdateLocations(locationService.locations);
+      onSelectLocation(newLoc.id);
+      setLocName('');
+      setLocQuery('');
+      setLocLat('');
+      setLocLng('');
+      setFound(null);
+      setLocMsg({ type: 'success', text: `✓ „${newLoc.name}“ angelegt und ausgewählt.` });
     } catch (err) {
-      setGeoFeedback({ success: false, message: `Fehler beim Erfassen: ${err.message}` });
+      setLocMsg({ type: 'error', text: err.message });
     } finally {
-      setIsGeocoding(false);
+      setLocBusy(false);
     }
   };
 
-  const handleUpdateRadius = (id, radiusKm) => {
-    const updated = locationService.updateLocation(id, { radiusKm });
-    onUpdateLocations(updated);
+  const updateRadius = (id, km) => {
+    if (onUpdateRadius) onUpdateRadius(id, km);
+    else onUpdateLocations(locationService.updateLocation(id, { radiusKm: km }));
   };
 
-  const handleDeleteLocation = (id) => {
-    const updated = locationService.deleteLocation(id);
-    onUpdateLocations(updated);
-    if (autoSyncICloud) {
-      setTimeout(() => backupService.directSyncToICloud(), 150);
+  // ---------------------------------------------------------------- Routen
+  const [startSel, setStartSel] = useState(() => activeLocationId || locations[0]?.id || 'custom');
+  const [startQuery, setStartQuery] = useState('');
+  const [endSel, setEndSel] = useState(() => locations.find((l) => l.id !== (activeLocationId || locations[0]?.id))?.id || 'custom');
+  const [endQuery, setEndQuery] = useState('');
+  const [routeName, setRouteName] = useState('');
+  const [corridor, setCorridor] = useState(DEFAULT_CORRIDOR_KM);
+  const [preview, setPreview] = useState(null);
+  const [calcBusy, setCalcBusy] = useState(false);
+  const [routeMsg, setRouteMsg] = useState(null);
+  const geoCache = useRef(new Map());
+
+  // Gelöschte Orte: Auswahl automatisch auf einen vorhandenen Ort setzen
+  const startId = startSel === 'custom' || locations.some((l) => l.id === startSel) ? startSel : locations[0]?.id || 'custom';
+  const endId = endSel === 'custom' || locations.some((l) => l.id === endSel) ? endSel : 'custom';
+
+  const resolvePoint = useCallback(async (sel, query) => {
+    if (sel && sel !== 'custom') {
+      const loc = locations.find((l) => l.id === sel);
+      const lat = parseFloat(loc?.lat);
+      const lng = parseFloat(loc?.lng);
+      return loc && Number.isFinite(lat) && Number.isFinite(lng) ? { name: loc.name, lat, lng } : null;
     }
-  };
+    const q = (query || '').trim();
+    if (q.length < 3) return null;
+    if (geoCache.current.has(q)) return geoCache.current.get(q);
+    const geo = await locationService.geocodeAddress(q, { bias: locations[0] || null });
+    const point = geo ? { name: q, lat: geo.lat, lng: geo.lng } : null;
+    geoCache.current.set(q, point);
+    return point;
+  }, [locations]);
 
-  // 4. Start & Zielkoordinaten für Route ermitteln (robust & fehlertolerant)
-  const resolveCoordsForRoute = async (type, customQuery = '') => {
-    const safeLocs = Array.isArray(locations) && locations.length > 0 ? locations : [];
-
-    // 1. Suche in gespeicherten Standorten nach ID oder Name
-    if (type && type !== 'custom') {
-      let loc = safeLocs.find((l) => l.id === type);
-      if (!loc) {
-        loc = safeLocs.find((l) => l.name === type || l.name?.toLowerCase() === type?.toLowerCase());
-      }
-      if (loc && loc.lat != null && loc.lng != null) {
-        const lat = parseFloat(loc.lat);
-        const lng = parseFloat(loc.lng);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          return { name: loc.name || 'Standort', lat, lng };
-        }
-      }
-    }
-
-    // 2. Benutzerdefinierte Adresse auflösen
-    const query = (customQuery || '').trim();
-    if (query) {
-      try {
-        const geo = await locationService.geocodeAddress(query);
-        if (geo && geo.lat != null && geo.lng != null) {
-          const lat = parseFloat(geo.lat);
-          const lng = parseFloat(geo.lng);
-          if (!isNaN(lat) && !isNaN(lng)) {
-            return { name: query, lat, lng };
-          }
-        }
-      } catch (err) {
-        console.warn('Geocoding notice:', err);
-      }
-    }
-
-    // Falls custom gewählt, aber noch kein Text eingegeben: kein Fallback
-    if (type === 'custom') return null;
-
-    // 3. Fallback: Erstbeste Location falls vorhanden
-    if (safeLocs.length > 0) {
-      const fallback = safeLocs.find((l) => !isNaN(parseFloat(l.lat)) && !isNaN(parseFloat(l.lng))) || safeLocs[0];
-      if (fallback && fallback.lat != null && fallback.lng != null) {
-        const lat = parseFloat(fallback.lat);
-        const lng = parseFloat(fallback.lng);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          return { name: fallback.name || 'Standort', lat, lng };
-        }
-      }
-    }
-
-    return null;
-  };
-
-  // 5. Automatische OSM-Streckenberechnung im Hintergrund bei jeder Ortsauswahl
+  // Vorschau der Straßenroute, sobald Start und Ziel feststehen (entprellt, damit nicht bei jedem Tastendruck gesucht wird)
   useEffect(() => {
-    if (!isOpen || modalTab !== 'routes') return;
-    let isCancelled = false;
-
-    const autoCalculateRoute = async () => {
+    if (!isOpen || tab !== 'routes') return undefined;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       try {
-        const start = await resolveCoordsForRoute(startType, customStartQuery);
-        const end = await resolveCoordsForRoute(endType, customEndQuery);
-
-        if (!start || !end || isCancelled) return;
-
-        // Routennamen automatisch passend vorschlagen, falls noch leer oder Standard
-        if (!newRouteName.trim() || newRouteName.includes(' - ') || newRouteName.includes(' ➔ ')) {
-          setNewRouteName(`${start.name || 'Start'} - ${end.name || 'Ziel'}`);
+        const start = await resolvePoint(startId, startQuery);
+        const end = await resolvePoint(endId, endQuery);
+        if (cancelled) return;
+        if (!start || !end) {
+          setPreview(null);
+          return;
         }
-
-        setIsCalculatingOsm(true);
+        if (isSamePlace(start, end)) {
+          setPreview(null);
+          setRouteMsg({ type: 'error', text: 'Start und Ziel sind gleich – bitte zwei verschiedene Orte wählen.' });
+          return;
+        }
+        setCalcBusy(true);
         const res = await routeService.calculateOsmRoute(start, end);
-        if (!isCancelled && res.success) {
-          setOsmRoutePreview({
-            startName: start.name,
-            endName: end.name,
-            distanceKm: res.distanceKm,
-            durationMin: res.durationMin,
-            waypointsCount: res.waypoints?.length || 0,
-            result: res,
-          });
-          setRouteToast(null);
+        if (!cancelled) {
+          setPreview({ start, end, res });
+          setRouteMsg(null);
         }
-      } catch (err) {
-        console.warn('Auto route preview calculation notice:', err);
+      } catch (e) {
+        if (!cancelled) setRouteMsg({ type: 'error', text: e.message });
       } finally {
-        if (!isCancelled) setIsCalculatingOsm(false);
+        setCalcBusy(false);
       }
-    };
-
-    const timer = setTimeout(autoCalculateRoute, 250);
+    }, 900);
     return () => {
-      isCancelled = true;
+      cancelled = true;
       clearTimeout(timer);
     };
-  }, [modalTab, startType, endType, customStartQuery, customEndQuery, locations]);
+  }, [isOpen, tab, startId, endId, startQuery, endQuery, resolvePoint]);
 
-  // 6. Manuelle OSM Route Neuberechnung (Refresh)
-  const handlePreviewOsmRoute = async () => {
-    setIsCalculatingOsm(true);
-    setRouteToast(null);
-    try {
-      const start = await resolveCoordsForRoute(startType, customStartQuery);
-      const end = await resolveCoordsForRoute(endType, customEndQuery);
-
-      if (!start || !end) {
-        setRouteToast({ type: 'error', message: 'Bitte gültigen Start- und Zielort angeben.' });
-        setIsCalculatingOsm(false);
-        return;
-      }
-
-      const res = await routeService.calculateOsmRoute(start, end);
-      setOsmRoutePreview({
-        startName: start.name,
-        endName: end.name,
-        distanceKm: res.distanceKm,
-        durationMin: res.durationMin,
-        waypointsCount: res.waypoints?.length || 0,
-        result: res,
-      });
-      setRouteToast({
-        type: 'success',
-        message: `✓ OSM Route berechnet: ${res.distanceKm} km (ca. ${res.durationMin} Min. Fahrzeit)`,
-      });
-    } catch (e) {
-      setRouteToast({ type: 'error', message: `Fehler bei OSM-Berechnung: ${e.message}` });
-    } finally {
-      setIsCalculatingOsm(false);
-    }
-  };
-
-  // 7. Route speichern
   const handleAddRoute = async (e) => {
     e.preventDefault();
-
-    setIsCalculatingOsm(true);
-    setRouteToast(null);
-
+    setCalcBusy(true);
+    setRouteMsg(null);
     try {
-      const start = await resolveCoordsForRoute(startType, customStartQuery);
-      const end = await resolveCoordsForRoute(endType, customEndQuery);
-
-      if (!start || !end) {
-        setRouteToast({ type: 'error', message: 'Fehler: Start- oder Zielkoordinaten konnten nicht aufgelöst werden.' });
-        setIsCalculatingOsm(false);
-        return;
-      }
-
-      const routeName = newRouteName.trim() || `${start.name} - ${end.name}`;
-
-      // Verwende bereits vorab berechnete Route oder berechne sie jetzt
-      let osrm = osmRoutePreview?.result;
-      if (!osrm || osmRoutePreview.startName !== start.name || osmRoutePreview.endName !== end.name) {
-        osrm = await routeService.calculateOsmRoute(start, end);
-      }
-
-      const newR = await routeService.addRoute({
-        name: routeName,
-        description: newRouteDesc.trim() || `${start.name} ➔ ${end.name} (${osrm.distanceKm} km)`,
+      const start = await resolvePoint(startId, startQuery);
+      const end = await resolvePoint(endId, endQuery);
+      if (!start) throw new Error('Startpunkt nicht gefunden – bitte Eingabe prüfen.');
+      if (!end) throw new Error('Ziel nicht gefunden – bitte Eingabe prüfen.');
+      if (isSamePlace(start, end)) throw new Error('Start und Ziel sind gleich – bitte zwei verschiedene Orte wählen.');
+      const res = preview && isSamePlace(preview.start, start) && isSamePlace(preview.end, end) ? preview.res : await routeService.calculateOsmRoute(start, end);
+      const name = routeName.trim() || `${start.name} → ${end.name}`;
+      const newRoute = await routeService.addRoute({
+        name,
+        description: `${start.name} → ${end.name}`,
         startName: start.name,
         startCoords: { lat: start.lat, lng: start.lng },
         endName: end.name,
         endCoords: { lat: end.lat, lng: end.lng },
-        totalDistanceKm: osrm.distanceKm,
-        corridorRadiusKm: parseFloat(newRouteCorridor) || 2.5,
-        waypoints: osrm.waypoints,
-        polylineCoords: osrm.polylineCoords,
+        totalDistanceKm: res.distanceKm,
+        durationMin: res.durationMin,
+        approximate: res.approximate,
+        corridorRadiusKm: corridor,
+        polylineCoords: res.polylineCoords,
       });
-
       onUpdateRoutes(routeService.routes);
-      onSelectRoute(newR.id);
-      setNewRouteName('');
-      setNewRouteDesc('');
-      setOsmRoutePreview(null);
-
-      if (autoSyncICloud) {
-        setTimeout(async () => {
-          try {
-            const res = await backupService.directSyncToICloud();
-            setRouteToast({
-              type: 'success',
-              message: res.method === 'direct-file'
-                ? `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) gespeichert & in iCloud Drive gesichert!`
-                : `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) gespeichert!`,
-            });
-          } catch {
-            setRouteToast({ type: 'success', message: `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) lokal gespeichert!` });
-          }
-          setTimeout(() => setRouteToast(null), 5000);
-        }, 150);
-      } else {
-        setRouteToast({ type: 'success', message: `✓ Route "${newR.name}" (${newR.totalDistanceKm} km) erfolgreich angelegt!` });
-        setTimeout(() => setRouteToast(null), 5000);
-      }
+      onSelectRoute(newRoute.id);
+      setRouteName('');
+      setPreview(null);
+      setRouteMsg({ type: res.approximate ? 'warning' : 'success', text: res.approximate ? `„${newRoute.name}“ gespeichert – der Routing-Dienst war nicht erreichbar, der Korridor folgt vorerst der Luftlinie.` : `✓ „${newRoute.name}“ gespeichert und aktiviert.` });
     } catch (err) {
-      setRouteToast({ type: 'error', message: `Fehler beim Speichern der Route: ${err.message}` });
+      setRouteMsg({ type: 'error', text: err.message });
     } finally {
-      setIsCalculatingOsm(false);
+      setCalcBusy(false);
     }
   };
 
-  const handleDeleteRoute = (id) => {
-    const updated = routeService.deleteRoute(id);
-    onUpdateRoutes(updated);
-    if (autoSyncICloud) {
-      setTimeout(() => backupService.directSyncToICloud(), 150);
+  const handleSaveFile = async () => {
+    try {
+      const res = await backupService.saveToDatabase({ explicit: true });
+      setFooterMsg({ type: res.success ? 'success' : 'error', text: describeSaveResult(res) });
+    } catch (e) {
+      setFooterMsg({ type: 'error', text: `Speichern fehlgeschlagen: ${e.message}` });
     }
   };
 
   if (!isOpen) return null;
 
+  const sortedRoutes = [...routes].sort((a, b) => (b.isTrip ? 1 : 0) - (a.isTrip ? 1 : 0));
+  const selectOptions = locations.map((l) => (
+    <option key={l.id} value={l.id}>{l.name}</option>
+  ));
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
-        
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid #F1F5F9', paddingBottom: '0.85rem' }}>
+      <div className="modal-content" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Orte und Routen verwalten">
+        <div className="modal-head">
           <div>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
-              Standorte, Suchradius & OSM-Routen
-            </h3>
-            <p style={{ fontSize: '0.76rem', color: '#64748B' }}>
-              Adressen oder Koordinaten hinterlegen • OpenStreetMap Fahrstrecken berechnen
-            </p>
+            <h3>Orte & Routen</h3>
+            <p>Suchbereiche für das Radar und feste Strecken wie den Arbeitsweg</p>
           </div>
-
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Schließen">
             <X size={20} />
           </button>
         </div>
 
-        {/* Tab Umschalter: Standorte vs. Routen */}
-        <div className="nav-pill-group" style={{ marginBottom: '1.25rem', width: '100%' }}>
-          <button
-            className={`nav-pill-btn ${modalTab === 'locations' ? 'active' : ''}`}
-            onClick={() => setModalTab('locations')}
-            style={{ flex: 1, justifyContent: 'center' }}
-          >
+        <div className="nav-pill-group" style={{ marginBottom: '1rem' }} role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'locations'} className={`nav-pill-btn ${tab === 'locations' ? 'active' : ''}`} onClick={() => setTab('locations')} style={{ flex: 1, justifyContent: 'center' }}>
             <MapPin size={14} />
-            <span>Standorte & Radius</span>
+            <span>Orte ({locations.length})</span>
           </button>
-          <button
-            className={`nav-pill-btn ${modalTab === 'routes' ? 'active' : ''}`}
-            onClick={() => setModalTab('routes')}
-            style={{ flex: 1, justifyContent: 'center' }}
-          >
-            <Navigation size={14} />
-            <span>OSM Fahrt-Routen (Ort 1 ➔ Ort 2)</span>
+          <button type="button" role="tab" aria-selected={tab === 'routes'} className={`nav-pill-btn ${tab === 'routes' ? 'active' : ''}`} onClick={() => setTab('routes')} style={{ flex: 1, justifyContent: 'center' }}>
+            <RouteIcon size={14} />
+            <span>Routen ({routes.length})</span>
           </button>
         </div>
 
-        {/* ========================================================= */}
-        {/* TAB 1: STANDORTE & RADIUS                                 */}
-        {/* ========================================================= */}
-        {modalTab === 'locations' && (
+        {tab === 'locations' && (
           <div>
-            {/* Liste gespeicherter Standorte */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem', maxHeight: '240px', overflowY: 'auto' }}>
-              {locations.map((loc) => {
-                const isActive = loc.id === activeLocationId;
-                return (
-                  <div
-                    key={loc.id}
-                    style={{
-                      border: `1px solid ${isActive ? '#0F172A' : '#E2E8F0'}`,
-                      borderRadius: '8px',
-                      padding: '0.85rem',
-                      background: isActive ? '#FAFAFA' : '#FFFFFF',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0F172A' }}>
-                            {loc.name}
-                          </span>
-                          {isActive && (
-                            <span className="badge badge-favorable" style={{ fontSize: '0.68rem' }}>
-                              Aktiv
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
-                          {loc.address || `${Number(loc.lat || 0).toFixed(4)}, ${Number(loc.lng || 0).toFixed(4)}`}
-                        </div>
-                        <div style={{ fontSize: '0.68rem', color: '#94A3B8' }} className="num-mono">
-                          {Number(loc.lat || 0).toFixed(4)}, {Number(loc.lng || 0).toFixed(4)}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        {!isActive && (
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => onSelectLocation(loc.id, loc)}
-                          >
-                            Aktivieren
-                          </button>
-                        )}
-                        {locations.length > 1 && (
-                          <button
-                            onClick={() => handleDeleteLocation(loc.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.3rem' }}
-                            title="Standort löschen"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Radius Slider */}
-                    <div style={{ background: '#F8FAFC', border: '1px solid #F1F5F9', borderRadius: '6px', padding: '0.45rem 0.65rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: '#475569', marginBottom: '0.2rem' }}>
-                        <span>Suchradius für Tankstellen:</span>
-                        <strong className="num-mono" style={{ color: '#0F172A' }}>{Number(loc.radiusKm || 5)} km</strong>
-                      </div>
-                      <input
-                        type="range"
-                        min="2"
-                        max="35"
-                        step="1"
-                        value={Number(loc.radiusKm || 5)}
-                        onChange={(e) => handleUpdateRadius(loc.id, parseFloat(e.target.value) || 5)}
-                        style={{ width: '100%', accentColor: '#0F172A' }}
-                      />
-                    </div>
+            <div className="manage-list">
+              {locations.map((loc) => (
+                <ManageItem
+                  key={loc.id}
+                  title={loc.name}
+                  sub={loc.address && loc.address !== loc.name ? loc.address : `${fmtNum(loc.lat, 4)}, ${fmtNum(loc.lng, 4)}`}
+                  isActive={loc.id === activeLocationId && !activeRouteId}
+                  onActivate={() => onSelectLocation(loc.id)}
+                  activateLabel="Auswählen"
+                  onRename={(name) => onUpdateLocations(locationService.updateLocation(loc.id, { name }))}
+                  onDelete={() => onUpdateLocations(locationService.deleteLocation(loc.id))}
+                  canDelete={locations.length > 1}
+                >
+                  <div className="manage-item-slider">
+                    <span>Radius</span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="25"
+                      step="1"
+                      value={Number(loc.radiusKm || 5)}
+                      onChange={(e) => updateRadius(loc.id, parseFloat(e.target.value) || 5)}
+                      aria-label={`Suchradius für ${loc.name}`}
+                    />
+                    <strong className="num-mono">{Number(loc.radiusKm || 5)} km</strong>
                   </div>
-                );
-              })}
+                </ManageItem>
+              ))}
             </div>
 
-            {/* Standort Hinzufügen Formular */}
-            <form onSubmit={handleAddLocation} style={{ borderTop: '1px solid #F1F5F9', paddingTop: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
-                <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A' }}>
-                  Neuen Standort anlegen
-                </h4>
-                {/* Eingabe-Modus Umschalter */}
-                <div style={{ display: 'flex', gap: '0.25rem', background: '#F1F5F9', padding: '0.15rem', borderRadius: '6px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setLocInputMode('address')}
-                    style={{
-                      border: 'none',
-                      background: locInputMode === 'address' ? '#FFFFFF' : 'transparent',
-                      padding: '0.2rem 0.5rem',
-                      borderRadius: '4px',
-                      fontSize: '0.72rem',
-                      fontWeight: locInputMode === 'address' ? 700 : 500,
-                      cursor: 'pointer',
-                      color: locInputMode === 'address' ? '#0F172A' : '#64748B',
-                    }}
-                  >
-                    Adresse
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLocInputMode('coords')}
-                    style={{
-                      border: 'none',
-                      background: locInputMode === 'coords' ? '#FFFFFF' : 'transparent',
-                      padding: '0.2rem 0.5rem',
-                      borderRadius: '4px',
-                      fontSize: '0.72rem',
-                      fontWeight: locInputMode === 'coords' ? 700 : 500,
-                      cursor: 'pointer',
-                      color: locInputMode === 'coords' ? '#0F172A' : '#64748B',
-                    }}
-                  >
-                    Koordinaten
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocInputMode('gps');
-                      handleGetGpsPosition();
-                    }}
-                    style={{
-                      border: 'none',
-                      background: locInputMode === 'gps' ? '#FFFFFF' : 'transparent',
-                      padding: '0.2rem 0.5rem',
-                      borderRadius: '4px',
-                      fontSize: '0.72rem',
-                      fontWeight: locInputMode === 'gps' ? 700 : 500,
-                      cursor: 'pointer',
-                      color: locInputMode === 'gps' ? '#0F172A' : '#64748B',
-                    }}
-                  >
-                    GPS
-                  </button>
-                </div>
-              </div>
+            <form className="form-section" onSubmit={handleAddLocation}>
+              <h4>Neuen Ort anlegen</h4>
 
-              {/* Name & Radius */}
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <input
-                  type="text"
-                  placeholder="Standortname (z.B. Zweitwohnsitz, Eltern)"
-                  value={newLocName}
-                  onChange={(e) => setNewLocName(e.target.value)}
-                  style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                  required
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <input
-                    type="number"
-                    placeholder="Radius km"
-                    value={newLocRadius}
-                    onChange={(e) => setNewLocRadius(e.target.value)}
-                    style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                    min="1"
-                    max="50"
-                    required
-                  />
-                  <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>km</span>
-                </div>
-              </div>
-
-              {/* MODUS 1: ADRESSE MIT NOMINATIM GEOCODING */}
-              {locInputMode === 'address' && (
-                <div style={{ marginBottom: '0.65rem' }}>
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {!coordsMode ? (
+                <div className="field">
+                  <label className="field-label" htmlFor="loc-query">Adresse oder Ort</label>
+                  <div className="input-with-btn">
                     <input
+                      id="loc-query"
+                      className="text-input"
                       type="text"
-                      placeholder="Adresse oder Stadt (z.B. Kurfürstendamm 100, Berlin)"
-                      value={newLocAddress}
-                      onChange={(e) => setNewLocAddress(e.target.value)}
-                      style={{ flex: 1, padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
+                      placeholder="z. B. Hauptstraße 5, Bielefeld"
+                      value={locQuery}
+                      onChange={(e) => {
+                        setLocQuery(e.target.value);
+                        setFound(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !found) {
+                          e.preventDefault();
+                          handleSearch();
+                        }
+                      }}
+                      autoComplete="street-address"
+                      enterKeyHint="search"
                     />
-                    <button
-                      type="button"
-                      onClick={handleTestGeocode}
-                      disabled={isGeocoding || !newLocAddress.trim()}
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: '0.74rem' }}
-                      title="Koordinaten per OpenStreetMap Nominatim suchen"
-                    >
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={handleSearch} disabled={locBusy || !locQuery.trim()}>
                       <Search size={13} />
-                      <span>{isGeocoding ? 'Sucht...' : 'Suchen'}</span>
+                      <span>Suchen</span>
                     </button>
                   </div>
                 </div>
-              )}
-
-              {/* MODUS 2: DIREKTE KOORDINATEN */}
-              {locInputMode === 'coords' && (
-                <div style={{ marginBottom: '0.65rem' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                    <div>
-                      <label style={{ fontSize: '0.68rem', color: '#64748B', display: 'block', marginBottom: '0.15rem' }}>
-                        Breitengrad (Latitude):
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="z.B. 52.5200"
-                        value={newLocLat}
-                        onChange={(e) => setNewLocLat(e.target.value)}
-                        style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: '0.68rem', color: '#64748B', display: 'block', marginBottom: '0.15rem' }}>
-                        Längengrad (Longitude):
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="z.B. 13.4050"
-                        value={newLocLng}
-                        onChange={(e) => setNewLocLng(e.target.value)}
-                        style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                        required
-                      />
-                    </div>
+              ) : (
+                <div className="form-row">
+                  <div className="field">
+                    <label className="field-label" htmlFor="loc-lat">Breitengrad</label>
+                    <input id="loc-lat" className="text-input" inputMode="decimal" placeholder="52,5200" value={locLat} onChange={(e) => setLocLat(e.target.value)} />
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Optionale Adressnotiz (z.B. Ferienhaus Harz)"
-                    value={newLocAddress}
-                    onChange={(e) => setNewLocAddress(e.target.value)}
-                    style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.75rem' }}
-                  />
-                </div>
-              )}
-
-              {/* MODUS 3: GPS */}
-              {locInputMode === 'gps' && (
-                <div style={{ marginBottom: '0.65rem', background: '#F8FAFC', padding: '0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ fontSize: '0.74rem', color: '#334155' }}>
-                      {detectedCoords ? (
-                        <span>GPS-Position erfasst: <strong className="num-mono">{detectedCoords.lat}, {detectedCoords.lng}</strong></span>
-                      ) : (
-                        <span>Keine GPS-Koordinaten geladen.</span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleGetGpsPosition}
-                      disabled={isGeocoding}
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: '0.72rem' }}
-                    >
-                      <LocateFixed size={12} />
-                      <span>{isGeocoding ? 'Ermittle...' : 'GPS aktualisieren'}</span>
-                    </button>
+                  <div className="field">
+                    <label className="field-label" htmlFor="loc-lng">Längengrad</label>
+                    <input id="loc-lng" className="text-input" inputMode="decimal" placeholder="13,4050" value={locLng} onChange={(e) => setLocLng(e.target.value)} />
                   </div>
                 </div>
               )}
 
-              {/* Feedback Alert */}
-              {geoFeedback && (
-                <div style={{
-                  marginBottom: '0.65rem',
-                  padding: '0.45rem 0.65rem',
-                  borderRadius: '6px',
-                  fontSize: '0.74rem',
-                  background: geoFeedback.success ? '#ECFDF5' : '#FEF2F2',
-                  color: geoFeedback.success ? '#065F46' : '#991B1B',
-                  border: `1px solid ${geoFeedback.success ? '#A7F3D0' : '#FECACA'}`,
-                }}>
-                  {geoFeedback.message}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.74rem', color: '#475569', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={autoSyncICloud}
-                    onChange={(e) => setAutoSyncICloud(e.target.checked)}
-                    style={{ accentColor: '#0F172A' }}
-                  />
-                  <span>Automatisch in iCloud-Datei sichern</span>
-                </label>
+              <div className="form-links">
+                <button type="button" className="text-link" onClick={handleGps} disabled={locBusy}>
+                  <LocateFixed size={13} /> Mein Standort
+                </button>
+                <button type="button" className="text-link" onClick={() => { setCoordsMode((v) => !v); setFound(null); }}>
+                  {coordsMode ? 'Adresse eingeben' : 'Koordinaten eingeben'}
+                </button>
               </div>
 
-              <button type="submit" className="btn btn-primary btn-sm" style={{ width: '100%' }} disabled={isGeocoding}>
-                <Plus size={14} />
-                <span>{isGeocoding ? 'Ermittle Geodaten...' : 'Standort anlegen & in iCloud sichern'}</span>
+              {found && !coordsMode && (
+                <div className="found-box">
+                  <CheckCircle2 size={14} />
+                  <span>{found.label}</span>
+                </div>
+              )}
+
+              <div className="field">
+                <label className="field-label" htmlFor="loc-name">Name (optional)</label>
+                <input id="loc-name" className="text-input" type="text" placeholder={found?.shortName || 'z. B. Zuhause, Arbeit, Eltern'} value={locName} onChange={(e) => setLocName(e.target.value)} maxLength={80} />
+              </div>
+
+              <div className="field">
+                <span className="field-label">Suchradius</span>
+                <div className="chip-row">
+                  {RADIUS_PRESETS.map((r) => (
+                    <button key={r} type="button" className={`chip-btn ${locRadius === r ? 'active' : ''}`} onClick={() => setLocRadius(r)} aria-pressed={locRadius === r}>
+                      {r} km
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Msg msg={locMsg} />
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={locBusy}>
+                {locBusy ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                <span>{locBusy ? 'Suche Ort …' : 'Ort speichern'}</span>
               </button>
             </form>
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* TAB 2: ROUTEN & KORRIDORE (OSM ORT 1 ➔ ORT 2)            */}
-        {/* ========================================================= */}
-        {modalTab === 'routes' && (
+        {tab === 'routes' && (
           <div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem', maxHeight: '220px', overflowY: 'auto' }}>
-              {/* Option: Keine Route aktiv */}
-              <div
-                style={{
-                  border: `1px solid ${!activeRouteId ? '#0F172A' : '#E2E8F0'}`,
-                  borderRadius: '8px',
-                  padding: '0.75rem 0.85rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  background: !activeRouteId ? '#FAFAFA' : '#FFFFFF',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0F172A' }}>
-                    Standard: Keine Route (Umkreis-Modus)
-                  </div>
-                  <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-                    Zeigt alle Tankstellen im Sternfahrt-Radius (Hin- & Rückweg berechnet)
-                  </div>
-                </div>
-                {!activeRouteId ? (
-                  <span className="badge badge-favorable" style={{ fontSize: '0.68rem' }}>Aktiv</span>
-                ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={() => onSelectRoute(null)}>
-                    Wählen
+            {sortedRoutes.length > 0 ? (
+              <div className="manage-list">
+                {sortedRoutes.map((r) => (
+                  <ManageItem
+                    key={r.id}
+                    title={r.name}
+                    badge={r.isTrip ? 'Fahrt' : null}
+                    sub={`${r.startName || 'Start'} → ${r.endName || 'Ziel'}`}
+                    meta={`${fmtNum(r.totalDistanceKm, 1)} km${r.durationMin ? ` • ca. ${fmtDuration(r.durationMin)}` : ''} • Korridor ±${fmtNum(r.corridorRadiusKm || DEFAULT_CORRIDOR_KM, 1)} km • ${r.approximate ? 'Luftlinie (Routing war nicht erreichbar)' : 'Straßenroute'}`}
+                    isActive={r.id === activeRouteId}
+                    onActivate={() => onSelectRoute(r.id)}
+                    activateLabel="Anzeigen"
+                    onRename={(name) => onUpdateRoutes(routeService.updateRoute(r.id, { name }))}
+                    onDelete={() => onUpdateRoutes(routeService.deleteRoute(r.id))}
+                    extra={r.isTrip ? (
+                      <button type="button" className="icon-btn" title="Dauerhaft als Route behalten" aria-label="Dauerhaft als Route behalten" onClick={() => onUpdateRoutes(routeService.updateRoute(r.id, { isTrip: false }))}>
+                        <Bookmark size={14} />
+                      </button>
+                    ) : null}
+                  />
+                ))}
+                {activeRouteId && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => onSelectRoute(null)}>
+                    <MapPin size={13} />
+                    <span>Route abwählen – zurück zum Standort</span>
                   </button>
                 )}
               </div>
+            ) : (
+              <div className="drawer-empty" style={{ marginBottom: '1rem' }}>
+                <RouteIcon size={20} color="#94A3B8" />
+                <strong>Noch keine Route gespeichert</strong>
+                <span>Lege unten eine feste Strecke an. Für spontane Fahrten nutze „Fahrt planen“.</span>
+              </div>
+            )}
 
-              {routes.map((r) => {
-                const isActive = r.id === activeRouteId;
-                return (
-                  <div
-                    key={r.id}
-                    style={{
-                      border: `1px solid ${isActive ? '#2563EB' : '#E2E8F0'}`,
-                      borderRadius: '8px',
-                      padding: '0.85rem',
-                      background: isActive ? '#EFF6FF' : '#FFFFFF',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0F172A' }}>
-                            {r.name}
-                          </span>
-                          {isActive && (
-                            <span className="badge badge-blue" style={{ fontSize: '0.68rem' }}>
-                              Route aktiv
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '0.15rem' }}>
-                          {r.description || `${r.startName || 'Start'} ➔ ${r.endName || 'Ziel'}`}
-                        </div>
-                      </div>
+            <form className="form-section" onSubmit={handleAddRoute}>
+              <h4>Neue Route</h4>
+              <div className="form-row">
+                <div className="field">
+                  <label className="field-label" htmlFor="route-start">Start</label>
+                  <select id="route-start" className="select-input" value={startId} onChange={(e) => setStartSel(e.target.value)}>
+                    {selectOptions}
+                    <option value="custom">Andere Adresse …</option>
+                  </select>
+                  {startId === 'custom' && (
+                    <input className="text-input" style={{ marginTop: '0.35rem' }} type="text" placeholder="Start-Adresse" value={startQuery} onChange={(e) => setStartQuery(e.target.value)} />
+                  )}
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="route-end">Ziel</label>
+                  <select id="route-end" className="select-input" value={endId} onChange={(e) => setEndSel(e.target.value)}>
+                    {selectOptions}
+                    <option value="custom">Andere Adresse …</option>
+                  </select>
+                  {endId === 'custom' && (
+                    <input className="text-input" style={{ marginTop: '0.35rem' }} type="text" placeholder="Ziel-Adresse" value={endQuery} onChange={(e) => setEndQuery(e.target.value)} />
+                  )}
+                </div>
+              </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        {!isActive ? (
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => onSelectRoute(r.id)}
-                          >
-                            Route abfahren
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => onSelectRoute(null)}
-                          >
-                            Deaktivieren
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDeleteRoute(r.id)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0.3rem' }}
-                          title="Route löschen"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.72rem', color: '#475569', marginTop: '0.35rem' }}>
-                      <span>Strecke: <strong>{Number(r.totalDistanceKm || 0).toFixed(1)} km</strong></span>
-                      <span>Korridor-Puffer: <strong>±{Number(r.corridorRadiusKm || 2.5).toFixed(1)} km</strong></span>
-                      <span style={{ color: '#059669', fontWeight: 600 }}>OSM-geprüft</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Neue Route hinzufügen Formular: Ort 1 zu Ort 2 */}
-            <form onSubmit={handleAddRoute} style={{ borderTop: '1px solid #F1F5F9', paddingTop: '1rem' }}>
-              <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0F172A', marginBottom: '0.5rem' }}>
-                Neue OSM-Route berechnen (Ort 1 ➔ Ort 2)
-              </h4>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div className="field">
+                <label className="field-label" htmlFor="route-name">Name (optional)</label>
                 <input
+                  id="route-name"
+                  className="text-input"
                   type="text"
-                  placeholder="Routen-Name (z.B. Arbeitsweg)"
-                  value={newRouteName}
-                  onChange={(e) => setNewRouteName(e.target.value)}
-                  style={{ padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                  required
+                  placeholder={preview ? `${preview.start.name} → ${preview.end.name}` : 'z. B. Arbeitsweg'}
+                  value={routeName}
+                  onChange={(e) => setRouteName(e.target.value)}
+                  maxLength={80}
                 />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <input
-                    type="number"
-                    step="0.5"
-                    placeholder="Korridor"
-                    value={newRouteCorridor}
-                    onChange={(e) => setNewRouteCorridor(e.target.value)}
-                    style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.8rem' }}
-                    required
-                  />
-                  <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>km</span>
+              </div>
+
+              <div className="field">
+                <span className="field-label">Korridor links und rechts der Strecke</span>
+                <div className="corridor-chips" role="group" aria-label="Korridor-Breite">
+                  {CORRIDOR_OPTIONS.map((rad) => (
+                    <button key={rad} type="button" className={Math.abs(corridor - rad) < 0.2 ? 'active' : ''} onClick={() => setCorridor(rad)}>
+                      ±{fmtNum(rad, rad % 1 ? 1 : 0)} km
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Startort (Ort 1) Auswahl */}
-              <div style={{ marginBottom: '0.5rem' }}>
-                <label style={{ fontSize: '0.7rem', color: '#64748B', display: 'block', marginBottom: '0.15rem' }}>
-                  Startpunkt (Ort 1):
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
-                  <select
-                    value={startType}
-                    onChange={(e) => setStartType(e.target.value)}
-                    style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.78rem', background: '#FFFFFF' }}
-                  >
-                    {locations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                    <option value="custom">+ Andere Adresse / Ort...</option>
-                  </select>
-                  {startType === 'custom' && (
-                    <input
-                      type="text"
-                      placeholder="Start-Adresse eingeben"
-                      value={customStartQuery}
-                      onChange={(e) => setCustomStartQuery(e.target.value)}
-                      style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.78rem' }}
-                      required
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Zielort (Ort 2) Auswahl */}
-              <div style={{ marginBottom: '0.65rem' }}>
-                <label style={{ fontSize: '0.7rem', color: '#64748B', display: 'block', marginBottom: '0.15rem' }}>
-                  Zielpunkt (Ort 2):
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
-                  <select
-                    value={endType}
-                    onChange={(e) => setEndType(e.target.value)}
-                    style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.78rem', background: '#FFFFFF' }}
-                  >
-                    {locations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                    <option value="custom">+ Andere Adresse / Ort...</option>
-                  </select>
-                  {endType === 'custom' && (
-                    <input
-                      type="text"
-                      placeholder="Ziel-Adresse eingeben"
-                      value={customEndQuery}
-                      onChange={(e) => setCustomEndQuery(e.target.value)}
-                      style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.78rem' }}
-                      required
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Live OSM-Streckenanzeige (Automatische Berechnung) */}
-              {isCalculatingOsm && !osmRoutePreview && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.5rem 0.65rem', marginBottom: '0.65rem', background: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.74rem', color: '#0284C7' }}>
+              {calcBusy && !preview && (
+                <div className="inline-msg is-info">
                   <RefreshCw size={13} className="animate-spin" />
-                  <span>Berechne OSM-Fahrstrecke und Fahrzeit automatisch...</span>
+                  <span>Berechne Straßenroute …</span>
                 </div>
               )}
 
-              {osmRoutePreview && (
-                <div
-                  style={{
-                    background: '#F0FDF4',
-                    border: '1px solid #BBF7D0',
-                    borderRadius: '8px',
-                    padding: '0.75rem 0.85rem',
-                    marginBottom: '0.75rem',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.35rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#166534', fontWeight: 700, fontSize: '0.8rem' }}>
-                      <CheckCircle2 size={15} color="#16A34A" />
-                      <span>OSM-Strecke automatisch berechnet</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <button
-                        type="button"
-                        onClick={handlePreviewOsmRoute}
-                        disabled={isCalculatingOsm}
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                        title="Route manuell neu berechnen"
-                      >
-                        <RefreshCw size={10} className={isCalculatingOsm ? 'animate-spin' : ''} />
-                        <span>Neu berechnen</span>
-                      </button>
-                      <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: 600 }}>
-                        ±{newRouteCorridor} km Korridor
-                      </span>
-                    </div>
+              {preview && (
+                <div className={`route-preview ${preview.res.approximate ? 'is-approx' : ''}`}>
+                  <div className="route-preview-head">
+                    {preview.res.approximate ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+                    <span>{preview.res.approximate ? 'Nur Luftlinie – Routing-Dienst nicht erreichbar' : 'Straßenroute berechnet'}</span>
+                    {calcBusy && <RefreshCw size={12} className="animate-spin" />}
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.25rem' }}>
+                  <div className="route-preview-figures">
                     <div>
-                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrstrecke:</span>
-                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>{Number(osmRoutePreview.distanceKm || 0).toFixed(1)} km</strong>
+                      <span>Strecke</span>
+                      <strong className="num-mono">{fmtNum(preview.res.distanceKm, 1)} km</strong>
                     </div>
                     <div>
-                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>Fahrzeit:</span>
-                      <strong className="num-mono" style={{ fontSize: '1.2rem', color: '#0F172A' }}>~{Math.round(Number(osmRoutePreview.durationMin || 0))} Min.</strong>
-                    </div>
-                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                      <span style={{ fontSize: '0.68rem', color: '#64748B', display: 'block' }}>OSM-Punkte:</span>
-                      <span className="num-mono" style={{ fontSize: '0.82rem', color: '#334155' }}>{osmRoutePreview.waypointsCount} Segmente</span>
+                      <span>Fahrzeit</span>
+                      <strong className="num-mono">ca. {fmtDuration(preview.res.durationMin) || '–'}</strong>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Feedback Toast */}
-              {routeToast && (
-                <div
-                  style={{
-                    marginBottom: '0.65rem',
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: '6px',
-                    fontSize: '0.75rem',
-                    background: (routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#FEF2F2' : '#ECFDF5',
-                    color: (routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#991B1B' : '#065F46',
-                    border: `1px solid ${(routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? '#FECACA' : '#A7F3D0'}`,
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                  }}
-                >
-                  {(routeToast.type === 'error' || (typeof routeToast === 'string' && routeToast.includes('Fehler'))) ? (
-                    <AlertCircle size={14} color="#DC2626" />
-                  ) : (
-                    <CheckCircle2 size={14} color="#16A34A" />
-                  )}
-                  <span>{routeToast.message || routeToast}</span>
-                </div>
-              )}
+              <Msg msg={routeMsg} />
 
-              <button type="submit" className="btn btn-primary btn-sm" style={{ width: '100%', padding: '0.6rem' }} disabled={isCalculatingOsm}>
-                <Plus size={15} />
-                <span>{isCalculatingOsm ? 'Berechne Route...' : 'Route speichern & aktivieren'}</span>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={calcBusy}>
+                {calcBusy ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                <span>{calcBusy ? 'Berechne …' : 'Route speichern & anzeigen'}</span>
               </button>
             </form>
           </div>
         )}
 
-        {/* iCloud Sync Fußleiste */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #F1F5F9', paddingTop: '0.85rem', marginTop: '1.25rem', fontSize: '0.74rem' }}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={async () => {
-              try {
-                const res = await backupService.directSyncToICloud();
-                alert(res.method === 'direct-file' ? `✓ In iCloud Drive gespeichert (${res.directPath})!` : '✓ Datei "kraftstoff_daten.json" erzeugt!');
-              } catch (e) {
-                alert(`Fehler: ${e.message}`);
-              }
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-          >
+        <Msg msg={footerMsg} />
+        <div className="modal-foot">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleSaveFile}>
             <Download size={13} color="#059669" />
-            <span>Jetzt in iCloud-Datei sichern</span>
+            <span>Jetzt in Datei sichern</span>
           </button>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-            Schließen
+          <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>
+            Fertig
           </button>
         </div>
-
       </div>
     </div>
   );

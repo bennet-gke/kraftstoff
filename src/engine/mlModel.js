@@ -1,717 +1,613 @@
 /**
- * KRAFTSTOFF - Erweiterte TensorFlow.js Machine Learning Engine
- * 
- * Beinhaltet:
- * 1. Kontinuierliches On-Device Lernen (Incremental Learning auf echten Stationsdaten)
- * 2. 24h/48h Zeitreihen-Kurven-Prognose (Intraday Neural Price Curve)
- * 3. Preisführerschafts- & Reaktions-Detektor (Kartellamt Reaction Monitor: Aral/Shell -> Discounter)
- * 4. Personalisiertes Tank-Strategie-Modell (Optimal Stopping Agent)
+ * KRAFTSTOFF - TensorFlow.js Preis-Forecaster (On-Device, 100% echte Daten)
+ *
+ * Das neuronale Netz lernt ausschließlich aus den echten Messwerten der Tankstellen im gewählten Bereich:
+ * Gegeben Stunde/Wochentag, Markenklasse, aktueller Abstand einer Station zu ihrem gleitenden Niveau und
+ * ein Zeithorizont (1–24 h), sagt es den relativen Preis (ct/L gegenüber dem Niveau) voraus.
+ *
+ * - TensorFlow.js wird erst nach dem App-Start nachgeladen (eigener Programmteil, schneller Start).
+ * - Startet UNTRAINIERT. Trainingsdaten werden zur Stundenmitte abgetastet, nie über App-Pausen hinweg.
+ * - Gewicht in der Prognose nur, wenn das Netz auf zurückgehaltenen (neuesten) Daten nachweislich besser ist
+ *   als das statistische Regionsprofil – und erst ab 3 Beobachtungstagen.
+ * - Gewichte in IndexedDB und als Snapshot in der Datenbank-Datei (Mac & iPhone teilen das Modell).
  */
 
-import * as tf from '@tensorflow/tfjs';
+import { idbGet, idbSet, idbDelete } from '../services/indexedDbStorage';
+import { profileEstimateAt, sampleHourly, relativeSamples, stationLevelAt, PRIOR_HOURLY_CT, DAY_SHORT, toMondayIndex } from './regionalTrends';
+import { applyRulesToForecast, DEFAULT_RULES } from './priceRules';
 
+const MODEL_IDB_PATH = 'indexeddb://kraftstoff-tf-forecaster-v3';
+const LEGACY_MODEL_PATHS = ['indexeddb://kraftstoff-tf-forecaster-v2'];
+const META_IDB_KEY = 'kraftstoff_ml_meta_v3';
+const LEGACY_META_KEYS = ['kraftstoff_ml_meta_v2'];
+const MODEL_VERSION = 3;
+const INPUT_DIM = 9;
+const MIN_SAMPLES_FOR_USE = 150;
+const MIN_DAYS_FOR_USE = 3;
+const MAX_TRAIN_SAMPLES = 4000;
+const MIN_TRAIN_INTERVAL_MS = 20 * 60 * 1000;
+const HORIZONS = [1, 2, 3, 4, 6, 9, 12, 18, 24];
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const REL_SCALE_CT = 10; // ±10 ct -> ±1
+const MAX_BLEND = 0.8;
+
+let tf = null;
+let tfPromise = null;
 let model = null;
 let isTraining = false;
-let isReady = false;
-let trainingProgress = {
-  epoch: 0,
-  loss: 0,
+let trainingPromise = null;
+let initPromise = null;
+let lastTrainingAt = 0;
+let trustedWeights = false;
+
+let status = {
+  phase: 'idle', // idle | loading | collecting | training | ready | error
   ready: false,
-  totalSamplesLearned: 140,
-  lastTrained: null,
+  samplesLearned: 0,
+  stationsLearned: 0,
+  daysLearned: 0,
+  trainingRuns: 0,
+  epochsTotal: 0,
+  lastLoss: null,
+  lastTrainedAt: null,
+  lastDatasetSize: 0,
+  validation: null, // { nnMaeCt, profileMaeCt, n }
+  isPersisted: false,
+  backend: null,
+  blendWeight: 0,
+  lastError: null,
+  modelVersion: MODEL_VERSION,
 };
+
 const listeners = new Set();
 
-function notifyListeners() {
-  listeners.forEach((fn) => fn({ ...trainingProgress, ready: isReady }));
+function notify() {
+  const snapshot = { ...status };
+  listeners.forEach((fn) => {
+    try { fn(snapshot); } catch {}
+  });
 }
 
 export function subscribeMLStatus(callback) {
   listeners.add(callback);
-  callback({ ...trainingProgress, ready: isReady });
+  callback({ ...status });
   return () => listeners.delete(callback);
 }
 
-/**
- * Erstellt ein neuronales Netz für den Browser mit Dropout zur Regularisierung.
- */
-export function buildModel() {
-  const newModel = tf.sequential();
+export function getMLStatus() {
+  return { ...status };
+}
 
-  // Hidden Layer 1 (32 Neuronen, ReLU)
-  newModel.add(
-    tf.layers.dense({
-      inputShape: [6],
-      units: 32,
-      activation: 'relu',
-      kernelInitializer: 'glorotNormal',
-    })
-  );
-
-  // Dropout gegen Overfitting
-  newModel.add(tf.layers.dropout({ rate: 0.1 }));
-
-  // Hidden Layer 2 (16 Neuronen, ReLU)
-  newModel.add(
-    tf.layers.dense({
-      units: 16,
-      activation: 'relu',
-    })
-  );
-
-  // Output Layer (1 Neuron, Sigmoid -> 0.0 bis 1.0, skaliert auf 1..100)
-  newModel.add(
-    tf.layers.dense({
-      units: 1,
-      activation: 'sigmoid',
-    })
-  );
-
-  newModel.compile({
-    optimizer: tf.train.adam(0.012),
-    loss: 'meanSquaredError',
-  });
-
-  return newModel;
+/** TensorFlow.js bei Bedarf nachladen (eigener Programmteil). */
+async function loadTf() {
+  if (tf) return tf;
+  if (!tfPromise) {
+    tfPromise = import('@tensorflow/tfjs').then((m) => {
+      tf = m;
+      return m;
+    });
+  }
+  return tfPromise;
 }
 
 /**
- * Normalisiert die 6 Input-Features in den Wertebereich [0, 1].
- * Feature 6 repräsentiert die gesetzliche 12-Uhr-Regelung (Spritpreisverordnung):
- * - Bei aktiver 12-Uhr-Regel:
- *   - Nach 12:00 Uhr (12:00 - 21:59): Preiserhöhungsschutz aktiv! (Wert = 1.0)
- *   - Vor 12:00 Uhr (06:00 - 11:59): Erhöhungsrisiko um 12:00 Uhr droht (Wert = 0.5)
- *   - Nacht (22:00 - 05:59): Nachtphase (Wert = 0.2)
- * - Bei inaktiver Regel: 0.0
+ * Anteil des neuronalen Netzes an der Prognose: nur bei nachgewiesenem Vorteil gegenüber dem Profil
+ * (Validierung auf den neuesten, beim Training zurückgehaltenen Daten) und ausreichender Datenbasis.
  */
-export function extractFeatures({
-  stationId = 'default',
-  dayOfWeek = new Date().getDay(),
-  hourOfDay = new Date().getHours(),
-  currentPrice = 1.75,
-  dynAverage = 1.75,
-  twelveClockActive = true,
-  lawFlag = 1,
-}) {
-  // 1. Hash der Tankstellen-ID (0 bis 1)
+export function blendWeightFor(samples, validation = status.validation, days = status.daysLearned) {
+  if (!samples || samples < MIN_SAMPLES_FOR_USE || (days || 0) < MIN_DAYS_FOR_USE) return 0;
+  if (!validation || !(validation.profileMaeCt > 0) || !Number.isFinite(validation.nnMaeCt)) return 0;
+  const skill = 1 - validation.nnMaeCt / validation.profileMaeCt;
+  if (skill <= 0.02) return 0;
+  const dataFactor = Math.min(1, samples / 1500);
+  return Math.round(Math.min(MAX_BLEND, skill * 1.6) * dataFactor * 100) / 100;
+}
+
+function compile(m) {
+  m.compile({ optimizer: tf.train.adam(0.004), loss: 'meanSquaredError' });
+  return m;
+}
+
+function buildModel() {
+  const m = tf.sequential();
+  m.add(tf.layers.dense({ inputShape: [INPUT_DIM], units: 32, activation: 'relu', kernelInitializer: 'glorotNormal' }));
+  m.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+  m.add(tf.layers.dense({ units: 1, activation: 'linear' }));
+  return compile(m);
+}
+
+const PREMIUM_BRANDS = ['aral', 'shell', 'esso', 'total', 'bp', 'agip', 'eni', 'omv'];
+const DISCOUNT_BRANDS = ['jet', 'star', 'hem', 'oil!', 'oil ', 'avia', 'hoyer', 'classic', 'globus', 'raiffeisen', 'bft', 'q1', 'go ', 'nordoel', 'sprint', 'team', 'tankpoint', 'm1', 'score', 'markant', 'calpam', 'supermarkt', 'famila', 'edeka', 'rewe', 'freie'];
+
+export function brandTier(brand) {
+  const b = (brand || '').toLowerCase().trim();
+  if (!b) return 0.5;
+  if (PREMIUM_BRANDS.some((p) => b.startsWith(p))) return 1.0;
+  if (DISCOUNT_BRANDS.some((d) => b.startsWith(d) || b.includes(d))) return 0.0;
+  return 0.5;
+}
+
+function stationHash(id) {
   let hash = 0;
-  for (let i = 0; i < stationId.length; i++) {
-    hash = (hash << 5) - hash + stationId.charCodeAt(i);
+  const s = String(id || '');
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash << 5) - hash + s.charCodeAt(i);
     hash |= 0;
   }
-  const stationNorm = Math.abs(hash % 100) / 100;
-
-  // 2. Wochentag (0=Sonntag bis 6=Samstag) -> 0..1
-  const dayNorm = Math.min(6, Math.max(0, dayOfWeek)) / 6;
-
-  // 3. Uhrzeit (0..23) -> 0..1
-  const hourNorm = Math.min(23, Math.max(0, hourOfDay)) / 23;
-
-  // 4. Aktueller Preis (Referenz 1.30 € bis 2.30 €)
-  const priceNorm = Math.min(1, Math.max(0, (currentPrice - 1.30) / 1.00));
-
-  // 5. Dyn. Durchschnitt
-  const dynAvgNorm = Math.min(1, Math.max(0, (dynAverage - 1.30) / 1.00));
-
-  // 6. 12-Uhr-Regelung Preisschutzfaktor (0.0 bis 1.0)
-  const isProtected = twelveClockActive !== undefined ? !!twelveClockActive : !!lawFlag;
-  let ruleFeature = 0.0;
-  if (isProtected) {
-    if (hourOfDay >= 12 && hourOfDay <= 21) {
-      ruleFeature = 1.0; // Absoluter Preiserhöhungsschutz ab 12 Uhr
-    } else if (hourOfDay >= 6 && hourOfDay < 12) {
-      ruleFeature = 0.5; // Vor 12 Uhr: Vorsicht vor 12-Uhr-Sprung
-    } else {
-      ruleFeature = 0.2; // Nachtphase
-    }
-  }
-
-  return [stationNorm, dayNorm, hourNorm, priceNorm, dynAvgNorm, ruleFeature];
+  return Math.abs(hash % 1000) / 1000;
 }
 
 /**
- * Synthetische Trainingsdaten basierend auf typischen deutschen Kraftstoffzyklen
- * und der 12-Uhr-Spritpreisverordnung.
+ * Merkmalsvektor (9 Werte in [-1.5, 1.5]):
+ * Zielstunde (sin/cos), Zielwochentag (sin/cos), Wochenende, Horizont, Markenklasse,
+ * Stations-Hash, aktueller Abstand zum Stationsniveau.
  */
-export function generateTrainingDataset(numSamples = 160) {
-  const xs = [];
-  const ys = [];
+export function extractFeatures({ targetMs, hoursAhead, brand, stationId, lastRelCt }) {
+  const d = new Date(targetMs);
+  const hourFrac = (d.getHours() + d.getMinutes() / 60) / 24;
+  const dayFrac = toMondayIndex(d.getDay()) / 7;
+  const isWeekend = d.getDay() === 0 || d.getDay() === 6 ? 1 : 0;
+  const rel = Math.max(-1.5, Math.min(1.5, (lastRelCt || 0) / REL_SCALE_CT));
+  return [
+    Math.sin(2 * Math.PI * hourFrac),
+    Math.cos(2 * Math.PI * hourFrac),
+    Math.sin(2 * Math.PI * dayFrac),
+    Math.cos(2 * Math.PI * dayFrac),
+    isWeekend,
+    Math.min(1, hoursAhead / 24),
+    brandTier(brand),
+    stationHash(stationId),
+    rel,
+  ];
+}
 
-  for (let i = 0; i < numSamples; i++) {
-    const day = Math.floor(Math.random() * 7);
-    const hour = Math.floor(Math.random() * 24);
-    const basePrice = 1.68 + Math.random() * 0.15;
-    const isTwelveClockActive = Math.random() > 0.3; // Meist aktiv
-    
-    // Intraday pattern unter Berücksichtigung der 12-Uhr-Regelung:
-    // Vor 12:00 Uhr: Morgenspitze & Volatilität
-    // Nach 12:00 Uhr: Preiserhöhungsverbot! Kontinuierlicher Abwärtstrend zum Abend
-    let timeShift = 0;
-    if (hour >= 6 && hour < 12) {
-      timeShift = +0.065; // Teurere Phase vor 12 Uhr
-    } else if (hour >= 12 && hour < 15) {
-      timeShift = -0.010; // Mittagsfenster
-    } else if (hour >= 15 && hour < 18) {
-      timeShift = isTwelveClockActive ? -0.035 : +0.020; // 12-Uhr-Schutz verhindert Nachmittagspeak
-    } else if (hour >= 18 && hour <= 21) {
-      timeShift = -0.060; // Günstigster Abend
-    } else {
-      timeShift = +0.050; // Nachtzuschlag
+/** Profil-Vorhersage (Baseline) für den relativen Preis zur Zeit t1 ausgehend von t0. */
+function profileBaseline(profile, t0, t1, hoursAhead, lastRelCt) {
+  const e0 = profileEstimateAt(profile, t0).est;
+  const e1 = profileEstimateAt(profile, t1).est;
+  return e1 + (lastRelCt - e0) * Math.exp(-hoursAhead / 10);
+}
+
+/**
+ * Baut den Trainingsdatensatz aus echten Messreihen (Reservoir-Stichprobe, speicherschonend).
+ * Ziel: relativer Preis zum Zeitpunkt t0+h gegenüber dem gleitenden Niveau zum Zeitpunkt t0.
+ * @param {Map<string, Array>} readingsMap  stationId -> Messpunkte
+ * @param {Map<string, Object>} stationsMeta stationId -> { brand }
+ */
+export function buildTrainingDataset(readingsMap, stationsMeta, { now = Date.now(), lookbackDays = 28, maxSamples = MAX_TRAIN_SAMPLES, profile = null } = {}) {
+  const estFn = (h) => profile?.hourOfDay?.[h]?.est ?? (profile?.prior || PRIOR_HOURLY_CT)[h];
+  const fromMs = now - lookbackDays * DAY_MS;
+  const reservoir = [];
+  let seen = 0;
+  let stationsUsed = 0;
+  const days = new Set();
+
+  for (const [stationId, pts] of readingsMap || []) {
+    if (!pts || pts.length < 6) continue;
+    const samples = sampleHourly(pts, fromMs, now);
+    if (samples.length < 6) continue;
+    const rel = relativeSamples(samples, estFn);
+    if (rel.length === 0) continue;
+    const byT = new Map(samples.map((s) => [s.t, s.p]));
+    const brand = stationsMeta?.get?.(stationId)?.brand || '';
+    let used = 0;
+    for (const s0 of rel) {
+      // nur jede zweite Stunde als Ausgangspunkt (weniger stark korrelierte Beispiele)
+      if (Math.floor(s0.t / HOUR_MS) % 2 !== 0) continue;
+      for (const h of HORIZONS) {
+        const t1 = s0.t + h * HOUR_MS;
+        const p1 = byT.get(t1);
+        if (p1 === undefined) continue;
+        const item = { t0: s0.t, t1, h, brand, stationId, lastRelCt: s0.rel, target: (p1 - s0.level) * 100 };
+        seen += 1;
+        used += 1;
+        if (reservoir.length < maxSamples) reservoir.push(item);
+        else {
+          const j = Math.floor(Math.random() * seen);
+          if (j < maxSamples) reservoir[j] = item;
+        }
+      }
+      days.add(new Date(s0.t).toDateString());
     }
-
-    if (day === 2 && hour >= 17 && hour <= 20) {
-      timeShift -= 0.025; // Dienstags-Effekt
-    }
-
-    const currentPrice = basePrice + timeShift;
-    const dynAverage = basePrice;
-
-    const delta = currentPrice - dynAverage;
-    let targetScore = 0.5 - (delta * 6);
-    // Unter 12-Uhr-Schutz ab 12 Uhr gibt es einen Stabilitäts- und Sicherheitsbonus
-    if (isTwelveClockActive && hour >= 12 && hour <= 21) {
-      targetScore += 0.08;
-    }
-    targetScore = Math.max(0.05, Math.min(0.95, targetScore));
-
-    const features = extractFeatures({
-      stationId: `station-${i % 8}`,
-      dayOfWeek: day,
-      hourOfDay: hour,
-      currentPrice,
-      dynAverage,
-      twelveClockActive: isTwelveClockActive,
-    });
-
-    xs.push(features);
-    ys.push([targetScore]);
+    if (used > 0) stationsUsed += 1;
   }
 
+  // Zeitliche Aufteilung: die neuesten 20 % (nach Ausgangszeit) dienen der Validierung
+  reservoir.sort((a, b) => a.t0 - b.t0);
+  const cut = Math.floor(reservoir.length * 0.8);
+  const toX = (it) => extractFeatures({ targetMs: it.t1, hoursAhead: it.h, brand: it.brand, stationId: it.stationId, lastRelCt: it.lastRelCt });
+  const toY = (it) => [Math.max(-1.5, Math.min(1.5, it.target / REL_SCALE_CT))];
+  const train = reservoir.slice(0, cut);
+  const valid = reservoir.slice(cut);
   return {
-    xs: tf.tensor2d(xs),
-    ys: tf.tensor2d(ys),
+    xs: train.map(toX),
+    ys: train.map(toY),
+    valid,
+    validXs: valid.map(toX),
+    stationsUsed,
+    totalAvailable: seen,
+    daysCovered: days.size,
   };
 }
 
-const INDEXEDDB_PATH = 'indexeddb://kraftstoff-tf-model';
+async function loadMeta() {
+  try {
+    const meta = await idbGet(META_IDB_KEY);
+    return meta && typeof meta === 'object' ? meta : null;
+  } catch {
+    return null;
+  }
+}
 
-/**
- * Speichert das trainierte Modell im persistenten Browserspeicher (IndexedDB).
- */
-export async function saveModelToStorage() {
+async function saveMeta() {
+  const meta = {
+    samplesLearned: status.samplesLearned,
+    stationsLearned: status.stationsLearned,
+    daysLearned: status.daysLearned,
+    trainingRuns: status.trainingRuns,
+    epochsTotal: status.epochsTotal,
+    lastLoss: status.lastLoss,
+    lastTrainedAt: status.lastTrainedAt,
+    lastDatasetSize: status.lastDatasetSize,
+    validation: status.validation,
+  };
+  await idbSet(META_IDB_KEY, meta).catch(() => {});
+}
+
+async function persistModel() {
   if (!model) return false;
   try {
-    await model.save(INDEXEDDB_PATH);
-    trainingProgress.isPersisted = true;
-    trainingProgress.lastSaved = new Date();
-    notifyListeners();
+    await model.save(MODEL_IDB_PATH);
+    status.isPersisted = true;
     return true;
   } catch (e) {
-    console.warn('Could not save model to IndexedDB:', e);
+    console.warn('KI-Modell konnte nicht in IndexedDB gesichert werden:', e);
+    status.isPersisted = false;
     return false;
   }
 }
 
-/**
- * Löscht das gespeicherte Modell aus IndexedDB und initialisiert es neu.
- */
-export async function resetModelStorage() {
-  try {
-    await tf.io.removeModel(INDEXEDDB_PATH);
-  } catch {}
-  model = null;
-  isReady = false;
-  trainingProgress = {
-    epoch: 0,
-    loss: 0,
+function resetStatusCounters() {
+  status = {
+    ...status,
     ready: false,
-    totalSamplesLearned: 0,
-    lastTrained: null,
+    samplesLearned: 0,
+    stationsLearned: 0,
+    daysLearned: 0,
+    trainingRuns: 0,
+    epochsTotal: 0,
+    lastLoss: null,
+    lastTrainedAt: null,
+    lastDatasetSize: 0,
+    validation: null,
     isPersisted: false,
+    blendWeight: 0,
   };
-  notifyListeners();
-  return initAndTrainModel(15);
 }
 
-/**
- * Trainiert das Basis-Modell beim ersten Start oder lädt es aus IndexedDB.
- */
-export async function initAndTrainModel(epochs = 18) {
-  if (isTraining || isReady) return model;
-  isTraining = true;
+function settlePhase() {
+  status.blendWeight = trustedWeights ? blendWeightFor(status.samplesLearned) : 0;
+  status.ready = trustedWeights && status.samplesLearned >= MIN_SAMPLES_FOR_USE;
+  status.phase = status.ready ? 'ready' : 'collecting';
+}
 
-  try {
-    await tf.ready();
-
-    // 1. Prüfe zuerst, ob bereits ein trainiertes Modell in IndexedDB vorliegt!
+/** Initialisiert TF.js und lädt ein ggf. gespeichertes Modell. Trainiert NICHT synthetisch. */
+export async function initModel() {
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    status.phase = 'loading';
+    notify();
     try {
-      const models = await tf.io.listModels();
-      if (models[INDEXEDDB_PATH]) {
-        model = await tf.loadLayersModel(INDEXEDDB_PATH);
-        // Modell kompilieren nach Laden
-        model.compile({
-          optimizer: tf.train.adam(0.012),
-          loss: 'meanSquaredError',
-        });
-        isReady = true;
-        trainingProgress = {
-          epoch: epochs,
-          loss: 0.012,
-          ready: true,
-          totalSamplesLearned: parseInt(localStorage.getItem('kraftstoff_ml_samples') || '280', 10),
-          lastTrained: new Date(),
-          isPersisted: true,
-        };
-        notifyListeners();
-        return model;
+      await loadTf();
+      await tf.ready();
+      status.backend = tf.getBackend();
+      // Alte Modellversionen (anderes Trainingsziel) verwerfen
+      for (const p of LEGACY_MODEL_PATHS) await tf.io.removeModel(p).catch(() => {});
+      for (const k of LEGACY_META_KEYS) await idbDelete(k).catch(() => {});
+
+      const meta = await loadMeta();
+      try {
+        const models = await tf.io.listModels();
+        if (models[MODEL_IDB_PATH] && meta) {
+          const loaded = await tf.loadLayersModel(MODEL_IDB_PATH);
+          const inShape = loaded.inputs?.[0]?.shape;
+          if (inShape && inShape[inShape.length - 1] === INPUT_DIM) {
+            model = compile(loaded);
+            trustedWeights = true;
+            status = { ...status, ...meta, isPersisted: true, modelVersion: MODEL_VERSION };
+          } else {
+            loaded.dispose();
+            await tf.io.removeModel(MODEL_IDB_PATH).catch(() => {});
+          }
+        }
+      } catch (e) {
+        console.info('Kein gespeichertes KI-Modell gefunden, starte frisch:', e?.message || e);
       }
-    } catch (loadErr) {
-      console.info('No saved TF model found in IndexedDB, training fresh neural network:', loadErr);
+      if (!model) {
+        // Ohne passende Gewichte gilt auch der gespeicherte Lernstand nicht
+        model = buildModel();
+        trustedWeights = false;
+        resetStatusCounters();
+        await idbDelete(META_IDB_KEY).catch(() => {});
+      }
+      settlePhase();
+    } catch (err) {
+      console.error('TensorFlow.js konnte nicht initialisiert werden:', err);
+      status.phase = 'error';
+      status.ready = false;
+      status.lastError = 'TensorFlow.js ist auf diesem Gerät nicht verfügbar.';
     }
+    notify();
+    return model;
+  })();
+  return initPromise;
+}
 
-    // 2. Falls kein Modell existiert: Erstelle & trainiere das neuronale Netz
-    model = buildModel();
-
-    const { xs, ys } = generateTrainingDataset(160);
-
-    await model.fit(xs, ys, {
-      epochs,
-      batchSize: 16,
-      shuffle: true,
-      callbacks: {
-        onEpochEnd: (epoch, logs) => {
-          trainingProgress = {
-            epoch: epoch + 1,
-            loss: parseFloat(logs.loss.toFixed(4)),
-            ready: false,
-            totalSamplesLearned: 160,
-            lastTrained: new Date(),
-            isPersisted: false,
-          };
-          notifyListeners();
-        },
-      },
-    });
-
-    xs.dispose();
-    ys.dispose();
-
-    isReady = true;
-    trainingProgress.ready = true;
-    localStorage.setItem('kraftstoff_ml_samples', '160');
-
-    // Sofort in IndexedDB sichern
-    await saveModelToStorage();
-
-    notifyListeners();
-  } catch (err) {
-    console.error('TensorFlow.js training failed, falling back to heuristic:', err);
-    isReady = true;
-  } finally {
-    isTraining = false;
-  }
-
-  return model;
+function maeOf(pred, truth) {
+  if (pred.length === 0) return null;
+  let s = 0;
+  for (let i = 0; i < pred.length; i++) s += Math.abs(pred[i] - truth[i]);
+  return s / pred.length;
 }
 
 /**
- * KONTINUIERLICHES ON-DEVICE LERNEN:
- * Trainiert das neuronale Netz inkrementell mit den tatsächlichen Verlaufsdaten der aktuellen Tankstellen
- * und sichert die verbesserten Gewichte direkt in IndexedDB!
+ * Trainiert das Netz inkrementell auf den echten Messreihen des aktuellen Bereichs und validiert es gegen
+ * das Regionsprofil auf den neuesten Daten.
+ * @returns {Promise<{trained:boolean, reason?:string, samples?:number}>}
  */
-export async function continuouslyTrainOnHistory(stations = [], epochs = 4, twelveClockActive = true) {
-  if (!stations || stations.length === 0 || isTraining) return;
-  if (!model) {
-    await initAndTrainModel(15);
+export async function trainOnHistory({ readingsMap, stationsMeta, epochs = 4, force = false, now = Date.now(), profile = null } = {}) {
+  await initModel();
+  if (!model || !tf || status.phase === 'error') return { trained: false, reason: 'error' };
+  if (isTraining) return { trained: false, reason: 'busy' };
+  if (!force && now - lastTrainingAt < MIN_TRAIN_INTERVAL_MS) return { trained: false, reason: 'throttled' };
+  if (!readingsMap || readingsMap.size === 0) return { trained: false, reason: 'no-data' };
+
+  const dataset = buildTrainingDataset(readingsMap, stationsMeta, { now, profile });
+  if (dataset.xs.length < MIN_SAMPLES_FOR_USE) {
+    status.lastDatasetSize = dataset.xs.length;
+    settlePhase();
+    notify();
+    return { trained: false, reason: 'insufficient', samples: dataset.xs.length };
   }
 
   isTraining = true;
+  lastTrainingAt = now;
+  const phaseBefore = status.phase;
+  status.phase = 'training';
+  status.lastError = null;
+  notify();
 
-  try {
-    const xs = [];
-    const ys = [];
-
-    stations.forEach((st) => {
-      const history = st.history || [];
-      const dynAvg = st.evaluation?.effectiveDynAverage || st.currentPrice || 1.70;
-
-      // Nimm jeden 3. Punkt der 168h Historie
-      for (let i = 0; i < history.length; i += 3) {
-        const pt = history[i];
-        if (!pt || !pt.timestamp) continue;
-        const d = new Date(pt.timestamp);
-        const day = d.getDay();
-        const hour = d.getHours();
-        const price = pt.price;
-
-        const delta = price - dynAvg;
-        let targetScore = 0.5 - (delta * 6);
-        if (twelveClockActive && hour >= 12 && hour <= 21) {
-          targetScore += 0.08;
-        }
-        targetScore = Math.max(0.05, Math.min(0.95, targetScore));
-
-        const features = extractFeatures({
-          stationId: st.id,
-          dayOfWeek: day,
-          hourOfDay: hour,
-          currentPrice: price,
-          dynAverage: dynAvg,
-          twelveClockActive,
-        });
-
-        xs.push(features);
-        ys.push([targetScore]);
-      }
-    });
-
-    if (xs.length > 0) {
-      const xTensor = tf.tensor2d(xs);
-      const yTensor = tf.tensor2d(ys);
-
-      await model.fit(xTensor, yTensor, {
+  const run = (async () => {
+    const xT = tf.tensor2d(dataset.xs);
+    const yT = tf.tensor2d(dataset.ys);
+    try {
+      let lossOk = true;
+      await model.fit(xT, yT, {
         epochs,
-        batchSize: 32,
+        batchSize: 64,
         shuffle: true,
         callbacks: {
           onEpochEnd: (epoch, logs) => {
-            const currentTotal = (trainingProgress.totalSamplesLearned || 160) + xs.length;
-            trainingProgress = {
-              epoch: epoch + 1,
-              loss: parseFloat(logs.loss.toFixed(4)),
-              ready: true,
-              totalSamplesLearned: currentTotal,
-              lastTrained: new Date(),
-              isPersisted: true,
-            };
-            localStorage.setItem('kraftstoff_ml_samples', currentTotal.toString());
-            notifyListeners();
+            if (!Number.isFinite(logs?.loss)) {
+              lossOk = false;
+              model.stopTraining = true;
+              return;
+            }
+            status.lastLoss = Math.round(logs.loss * 10000) / 10000;
+            status.epochsTotal += 1;
+            notify();
           },
         },
       });
+      if (!lossOk) throw new Error('Training divergiert (ungültiger Fehlerwert).');
 
-      xTensor.dispose();
-      yTensor.dispose();
-
-      // Sofort in IndexedDB sichern
-      await saveModelToStorage();
-    }
-  } catch (e) {
-    console.warn('Continuous training iteration notice:', e);
-  } finally {
-    isTraining = false;
-  }
-}
-
-/**
- * Führt Inferenz mit TensorFlow.js aus und gibt den Preis-Score (1-100) zurück.
- */
-export function predictPriceScore({
-  stationId = 'default',
-  dayOfWeek = new Date().getDay(),
-  hourOfDay = new Date().getHours(),
-  currentPrice = 1.74,
-  dynAverage = 1.74,
-  twelveClockActive = true,
-  lawFlag = 1,
-}) {
-  const deltaCent = (currentPrice - dynAverage) * 100;
-  const isRuleActive = twelveClockActive !== undefined ? !!twelveClockActive : !!lawFlag;
-
-  if (model && isReady) {
-    try {
-      const inputVector = extractFeatures({
-        stationId,
-        dayOfWeek,
-        hourOfDay,
-        currentPrice,
-        dynAverage,
-        twelveClockActive: isRuleActive,
-      });
-
-      const inputTensor = tf.tensor2d([inputVector]);
-      const prediction = model.predict(inputTensor);
-      const scoreVal = prediction.dataSync()[0];
-
-      inputTensor.dispose();
-      prediction.dispose();
-
-      const score = Math.max(1, Math.min(100, Math.round(scoreVal * 100)));
-      return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, isRuleActive);
-    } catch (e) {
-      console.warn('TF.js inference error, using statistical fallback:', e);
-    }
-  }
-
-  // Statischer Fallback
-  const baseScore = 50 - deltaCent * 8;
-  const timeBonus = (hourOfDay >= 18 && hourOfDay <= 20) ? 14 : (hourOfDay >= 6 && hourOfDay <= 8) ? -16 : 0;
-  const dayBonus = dayOfWeek === 2 ? 6 : 0;
-  const ruleBonus = (isRuleActive && hourOfDay >= 12 && hourOfDay <= 21) ? 8 : 0;
-
-  const score = Math.max(1, Math.min(100, Math.round(baseScore + timeBonus + dayBonus + ruleBonus)));
-  return formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, isRuleActive);
-}
-
-/**
- * 24-STUNDEN NEURALE ZEITREIHEN-KURVEN-PROGNOSE:
- * Berechnet für jede Stunde der nächsten 24h den vorausgesagten Preis & Tiefststände!
- * Berücksichtigt die gesetzliche 12-Uhr-Regelung (Spritpreisverordnung):
- * - Nach 12:00 Uhr dürfen Preise gesetzlich NICHT steigen (Preiserhöhungsverbot).
- * - Garantiert stetigen oder fallenden Verlauf bis zum Abendtief.
- */
-export function predict24HourCurve(station, dynAverage = 1.70, twelveClockActive = true) {
-  if (!station) return null;
-  const now = new Date();
-  const currentHour = now.getHours();
-  const basePrice = station.currentPrice || 1.70;
-  const dynAvg = dynAverage || basePrice;
-
-  const curve = [];
-  let minPrice = 999;
-  let maxPrice = 0;
-  let lowestHour = 18;
-  let highestHour = 7;
-
-  let noonPrice = null;
-
-  for (let i = 0; i < 24; i++) {
-    const futureDate = new Date(now.getTime() + i * 60 * 60 * 1000);
-    const hour = futureDate.getHours();
-    const day = futureDate.getDay();
-
-    // Typischer Intraday Preisschwung
-    let delta = 0;
-    if (hour >= 6 && hour < 12) {
-      delta = +0.060; // Vor 12 Uhr Vormittagsspitze
-    } else if (hour >= 12 && hour < 15) {
-      delta = -0.010; // Mittagsfenster
-    } else if (hour >= 15 && hour < 18) {
-      // Unter 12-Uhr-Regel fällt der Preis weiter, ohne Regel droht Zwischenanstieg
-      delta = twelveClockActive ? -0.035 : +0.025;
-    } else if (hour >= 18 && hour <= 20) {
-      delta = -0.055; // Günstigstes Zeitfenster
-    } else if (hour === 21) {
-      delta = -0.025;
-    } else {
-      delta = +0.050; // Nacht (22:00 - 05:59)
-    }
-
-    // Dienstag-Vorteil
-    if (day === 2 && hour >= 18 && hour <= 20) delta -= 0.020;
-
-    let predPrice = parseFloat(Math.max(1.0, basePrice + delta).toFixed(3));
-
-    // STRIKTE 12-UHR-REGELUNG: Nach 12:00 Uhr bis 21:59 Uhr darf der Preis niemals steigen!
-    if (twelveClockActive) {
-      if (hour === 12) {
-        noonPrice = predPrice;
-      } else if (hour > 12 && hour <= 21 && noonPrice !== null) {
-        if (predPrice > noonPrice) predPrice = noonPrice;
-        if (curve.length > 0) {
-          const prevHourPrice = curve[curve.length - 1].predictedPrice;
-          if (predPrice > prevHourPrice) predPrice = prevHourPrice;
+      // Validierung gegen das Regionsprofil auf den neuesten Daten
+      let validation = null;
+      if (dataset.validXs.length >= 30) {
+        const out = tf.tidy(() => model.predict(tf.tensor2d(dataset.validXs)));
+        const nnPred = Array.from(out.dataSync()).map((v) => v * REL_SCALE_CT);
+        out.dispose();
+        if (nnPred.every(Number.isFinite)) {
+          const truth = dataset.valid.map((it) => it.target);
+          const prof = dataset.valid.map((it) => profileBaseline(profile, it.t0, it.t1, it.h, it.lastRelCt));
+          validation = {
+            nnMaeCt: Math.round(maeOf(nnPred, truth) * 100) / 100,
+            profileMaeCt: Math.round(maeOf(prof, truth) * 100) / 100,
+            n: truth.length,
+          };
         }
       }
-    }
 
-    // Neuraler Score für diese Stunde
-    const scoreObj = predictPriceScore({
-      stationId: station.id,
-      dayOfWeek: day,
-      hourOfDay: hour,
-      currentPrice: predPrice,
-      dynAverage: dynAvg,
-      twelveClockActive,
-    });
-
-    if (predPrice < minPrice) {
-      minPrice = predPrice;
-      lowestHour = hour;
+      trustedWeights = true;
+      status.samplesLearned = Math.max(status.samplesLearned, dataset.totalAvailable);
+      status.stationsLearned = Math.max(status.stationsLearned, dataset.stationsUsed);
+      status.daysLearned = Math.max(status.daysLearned || 0, dataset.daysCovered);
+      status.trainingRuns += 1;
+      status.lastTrainedAt = new Date(now).toISOString();
+      status.lastDatasetSize = dataset.xs.length;
+      if (validation) status.validation = validation;
+      settlePhase();
+      if (await persistModel()) await saveMeta();
+      return { trained: true, samples: dataset.xs.length };
+    } catch (e) {
+      console.warn('KI-Training fehlgeschlagen:', e);
+      status.lastError = e?.message || 'Training fehlgeschlagen.';
+      status.phase = phaseBefore === 'training' ? 'collecting' : phaseBefore;
+      settlePhase();
+      return { trained: false, reason: 'error' };
+    } finally {
+      xT.dispose();
+      yT.dispose();
+      isTraining = false;
+      notify();
     }
-    if (predPrice > maxPrice) {
-      maxPrice = predPrice;
-      highestHour = hour;
-    }
+  })();
+  trainingPromise = run;
+  return run;
+}
 
-    curve.push({
-      step: i,
-      hour,
-      hourFormatted: `${hour}:00`,
-      dayName: ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][day],
-      predictedPrice: predPrice,
-      score: scoreObj.score,
-      recommendation: scoreObj.recommendation,
-      isTwelveClockProtected: twelveClockActive && hour >= 12 && hour <= 21,
-      isLowest: false,
-      isHighest: false,
-    });
+/** Löscht Modell & Lernstand und beginnt von vorn (wartet ein laufendes Training ab). */
+export async function resetModel() {
+  await initModel();
+  if (isTraining && model) {
+    model.stopTraining = true;
+    try { await trainingPromise; } catch {}
+  }
+  try { if (tf) await tf.io.removeModel(MODEL_IDB_PATH); } catch {}
+  await idbDelete(META_IDB_KEY).catch(() => {});
+  if (model) { try { model.dispose(); } catch {} }
+  model = tf ? buildModel() : null;
+  trustedWeights = false;
+  lastTrainingAt = 0;
+  resetStatusCounters();
+  status.lastError = null;
+  settlePhase();
+  notify();
+}
+
+/**
+ * 24h-Prognose für eine Station: Mischung aus neuronalem Netz (sofern validiert besser) und Regionsprofil.
+ * Die aktuelle Abweichung der Station von ihrem Niveau klingt im Profilanteil über ~10 Stunden ab.
+ * Funktioniert auch, solange TensorFlow.js noch nicht geladen ist (dann reines Profil).
+ */
+export function forecastStationCurve({ station, pts = [], profile, hours = 24, now = Date.now(), rules = DEFAULT_RULES }) {
+  if (!station || !Number.isFinite(station.currentPrice)) return null;
+  const nowCell = profileEstimateAt(profile, now);
+  const estFn = (h) => profile?.hourOfDay?.[h]?.est ?? (profile?.prior || PRIOR_HOURLY_CT)[h];
+  // Niveau aus den letzten 24 h; ohne genug eigene Daten: aktueller Preis abzüglich der typischen Lage jetzt
+  const histLevel = pts.length >= 3 ? stationLevelAt(pts, now, estFn) : null;
+  const level = histLevel !== null ? histLevel : station.currentPrice - nowCell.est / 100;
+  const lastRelCt = (station.currentPrice - level) * 100;
+  const w = model && tf && status.ready ? status.blendWeight : 0;
+
+  const steps = [];
+  for (let h = 0; h <= hours; h++) {
+    const t = now + h * HOUR_MS;
+    const cell = profileEstimateAt(profile, t);
+    const profRel = cell.est + (lastRelCt - nowCell.est) * Math.exp(-h / 10);
+    steps.push({ h, t, profRel, conf: cell.conf });
   }
 
-  // Markiere Min & Max
-  curve.forEach((pt) => {
-    if (pt.predictedPrice === minPrice) pt.isLowest = true;
-    if (pt.predictedPrice === maxPrice) pt.isHighest = true;
+  let nnRel = null;
+  if (w > 0) {
+    try {
+      const feats = steps.map((s) => extractFeatures({ targetMs: s.t, hoursAhead: s.h, brand: station.brand, stationId: station.id, lastRelCt }));
+      const out = tf.tidy(() => model.predict(tf.tensor2d(feats)));
+      const arr = Array.from(out.dataSync());
+      out.dispose();
+      nnRel = arr.every(Number.isFinite) ? arr.map((v) => Math.max(-15, Math.min(15, v * REL_SCALE_CT))) : null;
+    } catch (e) {
+      console.warn('KI-Inferenz fehlgeschlagen, nutze Regionsprofil:', e);
+      nnRel = null;
+    }
+  }
+
+  const curve = steps.map((s, i) => {
+    const rel = nnRel ? w * nnRel[i] + (1 - w) * s.profRel : s.profRel;
+    const d = new Date(s.t);
+    const price = Math.round((level + rel / 100) * 1000) / 1000;
+    return {
+      hoursAhead: s.h,
+      t: s.t,
+      hour: d.getHours(),
+      hourFormatted: `${d.getHours()}:00`,
+      dayShort: DAY_SHORT[toMondayIndex(d.getDay())],
+      price,
+      relCt: Math.round(rel * 10) / 10,
+      conf: s.conf,
+      isLowest: false,
+      isHighest: false,
+    };
   });
+  // Stunde 0 = jetzt: realer Preis
+  curve[0].price = station.currentPrice;
+
+  // Gesetze: Erhöhungen nur zu erlaubten Zeiten, Stichtags-Änderungen verschieben das Niveau
+  if (rules && (rules.increase.length > 0 || rules.steps.length > 0)) {
+    const capped = applyRulesToForecast(curve, rules);
+    for (let i = 1; i < curve.length; i++) {
+      if (capped[i].price !== curve[i].price) {
+        curve[i].price = capped[i].price;
+        curve[i].relCt = Math.round((capped[i].price - level) * 1000) / 10;
+      }
+    }
+  }
+
+  let lowest = curve[0];
+  let highest = curve[0];
+  for (const c of curve) {
+    if (c.price < lowest.price) lowest = c;
+    if (c.price > highest.price) highest = c;
+  }
+  lowest.isLowest = true;
+  highest.isHighest = true;
 
   return {
     curve,
-    lowestHour,
-    lowestPrice: minPrice,
-    highestHour,
-    highestPrice: maxPrice,
-    potentialSavingsCent: parseFloat(((basePrice - minPrice) * 100).toFixed(1)),
-    isTwelveClockActive: !!twelveClockActive,
+    lowest,
+    highest,
+    level: Math.round(level * 1000) / 1000,
+    levelFromHistory: histLevel !== null,
+    nnWeight: Math.round(w * 100) / 100,
+    sourceLabel: nnRel ? `KI-Prognose (${Math.round(w * 100)} % neuronales Netz, ${Math.round((1 - w) * 100)} % Regionsprofil)` : 'Prognose aus dem Regionsprofil',
+    usesNeuralNet: !!nnRel,
+    potentialSavingsCent: Math.round((station.currentPrice - lowest.price) * 1000) / 10,
   };
 }
 
-/**
- * PREISFÜHRERSCHAFTS- & REAKTIONS-DETEKTOR:
- * Erkennt Preiserhöhungen von Leit-Marken (Aral, Shell) und berechnet den Zeitpuffer,
- * bevor Discounter (JET, HEM, Total) nachziehen!
- */
-export function detectBrandJumpLeaders(stations = []) {
-  if (!stations || stations.length < 2) return null;
-
-  const leaders = stations.filter((s) => ['aral', 'shell'].includes(s.brand?.toLowerCase()));
-  const followers = stations.filter((s) => ['jet', 'hem', 'totalenergies', 'star'].includes(s.brand?.toLowerCase()) || !s.brand);
-
-  if (leaders.length === 0) return null;
-
-  // Prüfe den aktivsten Preisführer
-  const leader = leaders[0];
-  const history = leader.history || [];
-  if (history.length < 3) return null;
-
-  const latest = history[history.length - 1]?.price || leader.currentPrice;
-  const prev = history[history.length - 2]?.price || latest;
-  const deltaCent = parseFloat(((latest - prev) * 100).toFixed(1));
-
-  // Typische Reaktionsverzögerung in deutschen Städten: 20 bis 40 Minuten
-  const estimatedLagMinutes = 25;
-  const isJumpActive = deltaCent >= 2.0;
-
-  return {
-    isJumpActive,
-    leaderBrand: leader.brand,
-    leaderName: leader.name,
-    deltaCent,
-    estimatedLagMinutes,
-    followerCount: followers.length,
-    cheapestFollower: followers.sort((a, b) => a.currentPrice - b.currentPrice)[0] || null,
-    recommendation: isJumpActive
-      ? `Achtung: ${leader.brand} hat vor kurzem um +${deltaCent} ct erhöht. Discounter (z.B. JET, HEM) ziehen typischerweise in ca. ${estimatedLagMinutes} Min. nach! Jetzt noch schnell tanken.`
-      : `Preisführer (${leader.brand}) verhält sich aktuell ruhig. Keine plötzliche Preiserhöhung der Folgestationen erwartet.`,
-  };
-}
-
-/**
- * PERSONALISIERTER TANK-STRATEGIE-AGENT (OPTIMAL STOPPING AGENT):
- * Entscheidet mathematisch, ob der Nutzer heute tanken sollte oder bis Tag X warten kann.
- * Integriert die 12-Uhr-Spritpreisverordnung direkt in die Entscheidungsfindung!
- */
-export function calculateOptimalTankStrategy({
-  activeVehicle,
-  currentFuelLevelPct = 25,
-  dailyCommuteKm = 25,
-  bestStationPrice = 1.70,
-  averageWeeklyMinPrice = 1.64,
-  isTwelveClockActive = true,
-  currentHour = new Date().getHours(),
-}) {
-  const tankCapacity = activeVehicle?.tankCapacityL || 50;
-  const consumption = activeVehicle?.consumptionL100km || 6.2;
-
-  // Aktuelle Restliter & Restreichweite
-  const currentLiters = tankCapacity * (currentFuelLevelPct / 100);
-  const remainingRangeKm = Math.round((currentLiters / consumption) * 100);
-
-  // Tage bis Tank kritisch wird (< 10%)
-  const reserveKm = (tankCapacity * 0.10 / consumption) * 100;
-  const usableRangeKm = Math.max(0, remainingRangeKm - reserveKm);
-  const daysUntilEmpty = Math.max(1, Math.floor(usableRangeKm / (dailyCommuteKm || 25)));
-
-  // Ersparnis beim Warten auf den Wochen-Tiefststand
-  const litersToFill = tankCapacity - currentLiters;
-  const potentialSavingsEuro = parseFloat((litersToFill * (bestStationPrice - averageWeeklyMinPrice)).toFixed(2));
-
-  let decision = 'WAIT'; // 'REFUEL_NOW' | 'WAIT' | 'URGENT'
-  let decisionLabel = 'Warten empfohlen';
-  let reasoning = '';
-
-  if (currentFuelLevelPct <= 15 || remainingRangeKm <= 60) {
-    decision = 'URGENT';
-    decisionLabel = 'Dringend tanken! (Reserve erreicht)';
-    reasoning = `Dein Tank ist fast leer (${remainingRangeKm} km Restreichweite). Warten auf günstigere Tage ist zu riskant.`;
-  } else if (isTwelveClockActive && currentHour >= 12 && currentHour <= 17 && daysUntilEmpty >= 1) {
-    decision = 'WAIT';
-    decisionLabel = 'Bis ca. 18:30 Uhr warten (12-Uhr-Schutz)';
-    reasoning = `⚖️ 12-Uhr-Regelung aktiv: Preiserhöhungen sind heute gesetzlich ausgeschlossen! Die Preise sinken bis ca. 18:30 Uhr weiter. Du hast noch ${remainingRangeKm} km Reichweite und kannst völlig risikofrei auf das Abendtief warten.`;
-  } else if (isTwelveClockActive && currentHour < 12 && potentialSavingsEuro >= 2.0 && daysUntilEmpty >= 1) {
-    decision = 'WAIT';
-    decisionLabel = '12:00 Uhr Preismeldung abwarten';
-    reasoning = `⚖️ 12-Uhr-Regelung aktiv: Vor 12 Uhr sind die Preise noch volatil. Ab 12:00 Uhr dürfen Preise nur noch sinken. Warte die Mittagsanpassung ab für optimale Ersparnis.`;
-  } else if (potentialSavingsEuro >= 3.50 && daysUntilEmpty >= 2) {
-    decision = 'WAIT';
-    decisionLabel = `Warte noch ca. ${daysUntilEmpty} Tage (Spart ~${potentialSavingsEuro.toFixed(2)} €)`;
-    reasoning = `Du hast noch ${remainingRangeKm} km Reichweite (${daysUntilEmpty} Tage Pendelstrecke). Der ML-Algorithmus erwartet am Tiefsttag der Woche Preise um ${averageWeeklyMinPrice.toFixed(3)} € (Ersparnis: +${potentialSavingsEuro.toFixed(2)} €).`;
-  } else {
-    decision = 'REFUEL_NOW';
-    decisionLabel = 'Heute tanken lohnt sich!';
-    const ruleNote = isTwelveClockActive && currentHour >= 18 && currentHour <= 21
-      ? ' (⚖️ 12-Uhr-Regelung: Abendtief erreicht, Preissprünge heute ausgeschlossen)'
-      : '';
-    reasoning = `Der aktuelle Preis (${bestStationPrice.toFixed(3)} €) ist bereits nahe am Tiefststand. Weiteres Warten bringt kaum Ersparnis${ruleNote}.`;
+/** Kompakter Snapshot (Gewichte + Lernstand) für die Datenbank-Datei – nur von echt trainierten Gewichten. */
+export async function getModelSnapshot() {
+  await initModel();
+  if (!model || !tf || !trustedWeights || status.samplesLearned < MIN_SAMPLES_FOR_USE) return null;
+  try {
+    const layers = model.getWeights().map((w) => ({ shape: w.shape, data: Array.from(w.dataSync()).map((v) => Math.round(v * 1e6) / 1e6) }));
+    if (!layers.every((l) => l.data.every(Number.isFinite))) return null;
+    return {
+      version: MODEL_VERSION,
+      inputDim: INPUT_DIM,
+      layers,
+      meta: {
+        samplesLearned: status.samplesLearned,
+        stationsLearned: status.stationsLearned,
+        daysLearned: status.daysLearned,
+        trainingRuns: status.trainingRuns,
+        epochsTotal: status.epochsTotal,
+        lastLoss: status.lastLoss,
+        lastTrainedAt: status.lastTrainedAt,
+        lastDatasetSize: status.lastDatasetSize,
+        validation: status.validation,
+      },
+    };
+  } catch (e) {
+    console.warn('KI-Snapshot konnte nicht erzeugt werden:', e);
+    return null;
   }
-
-  return {
-    remainingRangeKm,
-    daysUntilEmpty,
-    litersToFill: Math.round(litersToFill),
-    potentialSavingsEuro,
-    decision,
-    decisionLabel,
-    reasoning,
-  };
 }
 
-function formatPredictionResult(score, dayOfWeek, hourOfDay, deltaCent, twelveClockActive = true) {
-  let recommendation = 'Neutral';
-  let badgeClass = 'neutral';
-  let reasoning = '';
-
-  const dayNames = ['Sonntags', 'Montags', 'Dienstags', 'Mittwochs', 'Donnerstags', 'Freitags', 'Samstags'];
-  const dayName = dayNames[dayOfWeek] || 'Heute';
-
-  const isAfternoonProtected = twelveClockActive && hourOfDay >= 12 && hourOfDay <= 21;
-
-  if (score >= 75) {
-    recommendation = 'Sofort tanken! (Sehr günstig)';
-    badgeClass = 'favorable';
-    reasoning = `Preis liegt ${Math.abs(deltaCent).toFixed(1)} ct unter Marktschnitt. ${dayName} um ${hourOfDay}:00 Uhr ist ein optimales Tankfenster.${isAfternoonProtected ? ' ⚖️ 12-Uhr-Preisschutz aktiv.' : ''}`;
-  } else if (score >= 50) {
-    recommendation = isAfternoonProtected ? 'Guter Zeitpunkt (Preisschutz aktiv)' : 'Guter Zeitpunkt';
-    badgeClass = 'favorable-subtle';
-    reasoning = isAfternoonProtected
-      ? `Faires Preisniveau. ⚖️ 12-Uhr-Regelung garantiert: Preise können bis heute Nacht nicht mehr steigen! Tiefster Punkt gegen 18:30 Uhr erwartet.`
-      : `Preis im fairen Bereich. Weiterer Preisabfall am frühen Abend (~18:30 Uhr) möglich.`;
-  } else if (score >= 30) {
-    recommendation = hourOfDay < 12 && twelveClockActive ? 'Auf 12:00 Uhr warten' : 'Abwarten empfohlen';
-    badgeClass = 'neutral';
-    reasoning = hourOfDay < 12 && twelveClockActive
-      ? `Vormittagspreis leicht erhöht. ⚖️ Warte auf die 12:00 Uhr Meldung: Danach dürfen Tankstellen die Preise nur noch senken.`
-      : `Preis liegt leicht über dem gleitenden Durchschnitt. Günstigeres Fenster ab ca. 18 Uhr erwartet.`;
-  } else {
-    recommendation = 'Jetzt nicht tanken (Teure Phase)';
-    badgeClass = 'unfavorable';
-    reasoning = `Morgenspitze / Hochpreisphase (+${deltaCent.toFixed(1)} ct). Warte bis nach 17:30 Uhr für ca. 4-7 Cent Ersparnis.`;
+/** Übernimmt einen Snapshot (z.B. vom anderen Gerät), wenn er mehr gelernt hat als das lokale Modell. */
+export async function loadModelSnapshot(snapshot) {
+  if (!snapshot || snapshot.version !== MODEL_VERSION || snapshot.inputDim !== INPUT_DIM || !Array.isArray(snapshot.layers)) return false;
+  await initModel();
+  if (!model || !tf || isTraining) return false;
+  const incoming = Number(snapshot.meta?.samplesLearned) || 0;
+  if (incoming < MIN_SAMPLES_FOR_USE || (trustedWeights && incoming <= status.samplesLearned)) return false;
+  try {
+    const current = model.getWeights();
+    if (current.length !== snapshot.layers.length) return false;
+    const sameShapes = current.every((w, i) => JSON.stringify(w.shape) === JSON.stringify(snapshot.layers[i].shape));
+    if (!sameShapes || !snapshot.layers.every((l) => Array.isArray(l.data) && l.data.every(Number.isFinite))) return false;
+    const tensors = snapshot.layers.map((l) => tf.tensor(l.data, l.shape));
+    model.setWeights(tensors);
+    tensors.forEach((t) => t.dispose());
+    trustedWeights = true;
+    status = { ...status, ...snapshot.meta };
+    settlePhase();
+    if (await persistModel()) await saveMeta();
+    notify();
+    return true;
+  } catch (e) {
+    console.warn('KI-Snapshot konnte nicht geladen werden:', e);
+    return false;
   }
-
-  return {
-    score,
-    recommendation,
-    badgeClass,
-    reasoning,
-    patternDiscovered: `${dayName} um 18:00–19:30 Uhr sinken die Preise an dieser Station im Schnitt um ~4 Cent.`
-  };
 }

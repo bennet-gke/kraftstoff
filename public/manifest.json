@@ -1,18 +1,40 @@
 {
+  "id": "/",
   "short_name": "TankRadar",
-  "name": "KRAFTSTOFF | Intelligente Tankpreis-App",
-  "description": "Progressive Web-App zur KI-gestützten Analyse und dynamischen Bewertung von Kraftstoffpreisen.",
-  "icons": [
-    {
-      "src": "/icon.svg",
-      "type": "image/svg+xml",
-      "sizes": "192x192 512x512"
-    }
-  ],
+  "name": "KRAFTSTOFF | Tankradar & Tankwart",
+  "description": "Tankpreis-Radar mit regionalen Trends und lernendem Tankwart: wo und wann tanken.",
+  "lang": "de",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
   "background_color": "#F8FAFC",
   "theme_color": "#FFFFFF",
-  "display": "standalone",
-  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Fahrt planen",
+      "short_name": "Fahrt",
+      "description": "Tankstellen entlang einer Navigation finden",
+      "url": "/?action=trip",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Karte erkunden",
+      "short_name": "Karte",
+      "url": "/?tab=map",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
   "categories": ["utilities", "navigation", "finance"]
 }

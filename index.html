@@ -2,34 +2,31 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    
-    <!-- PWA primary meta tags -->
-    <title>KRAFTSTOFF | Intelligenter Tankpreis-Radar</title>
-    <meta name="title" content="KRAFTSTOFF | Intelligenter Tankpreis-Radar" />
-    <meta name="description" content="Progressive Web-App zur KI-gestützten Analyse und dynamischen Bewertung von Kraftstoffpreisen mit Adaptive Moving Average und TensorFlow.js." />
+    <meta name="format-detection" content="telephone=no" />
+
+    <title>KRAFTSTOFF | Tankradar & Tankwart</title>
+    <meta name="description" content="Tankpreis-Radar mit regionalen Trends und einem lernenden Tankwart: Wo und wann tanken? Ausschließlich echte MTS-K-Preise, KI direkt auf dem Gerät." />
     <meta name="theme-color" content="#FFFFFF" />
-    
-    <!-- iOS Web App tags -->
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+
+    <!-- iOS Web App -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="TankRadar" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
-    
+
     <!-- Web App Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    
-    <!-- Google Fonts: Inter & Plus Jakarta Sans for clean typography -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="root">
-      <!-- Elegante Sofort-Ladeanzeige (verhindert weißen Bildschirm bei Erstladung) -->
-      <div id="app-loading-placeholder" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 1.5rem; text-align: center;">
+      <!-- Sofort-Ladeanzeige (verhindert einen weißen Bildschirm bei der Erstladung) -->
+      <div id="app-loading-placeholder" style="min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 1.5rem; text-align: center;">
         <div style="width: 44px; height: 44px; background: #0F172A; color: #FFFFFF; border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(15,23,42,0.18); margin-bottom: 1rem;">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 22V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v18"></path>
@@ -37,54 +34,51 @@
           </svg>
         </div>
         <h3 style="font-size: 1.05rem; font-weight: 800; color: #0F172A; letter-spacing: -0.01em; margin-bottom: 0.25rem;">KRAFTSTOFF</h3>
-        <p style="font-size: 0.78rem; color: #64748B; font-weight: 500;">Intelligenter Tankradar wird geladen...</p>
+        <p style="font-size: 0.78rem; color: #64748B; font-weight: 500;">Tankradar wird geladen …</p>
+        <noscript><p style="font-size: 0.8rem; color: #B91C1C; margin-top: 1rem;">Bitte JavaScript aktivieren, um KRAFTSTOFF zu nutzen.</p></noscript>
       </div>
     </div>
 
     <script type="module" src="/src/main.jsx"></script>
-    
+
     <script>
-      // Markiere Render-Status
+      // Markiere Render-Status (main.jsx setzt true, sobald die App gestartet ist)
       window.__kraftstoff_mounted = false;
 
-      // Fail-Safe Watchdog: Falls ein alter Service-Worker-Cache die App blockiert,
-      // bereinige die Caches automatisch nach 2,8 Sekunden und lade die frische Version!
-      setTimeout(function() {
-        if (!window.__kraftstoff_mounted) {
-          console.warn('App nicht gestartet, alter Cache wird bereinigt...');
+      // Fail-Safe Watchdog: Ist die Seite vollständig geladen, die App aber nicht gestartet (z.B. ein alter
+      // Service-Worker-Cache verweist auf nicht mehr vorhandene Dateien), werden die Caches einmalig bereinigt
+      // und die Seite neu geladen. Bei langsamer Verbindung (Seite lädt noch) wird weiter gewartet.
+      (function () {
+        var started = Date.now();
+        function check() {
+          if (window.__kraftstoff_mounted) return;
+          if (document.readyState !== 'complete' && Date.now() - started < 60000) {
+            setTimeout(check, 3000);
+            return;
+          }
+          var alreadyTried = false;
+          try { alreadyTried = sessionStorage.getItem('kraftstoff_watchdog_reload') === '1'; } catch (e) {}
+          if (alreadyTried) {
+            console.warn('App weiterhin nicht gestartet, kein weiterer automatischer Reload.');
+            return;
+          }
+          try { sessionStorage.setItem('kraftstoff_watchdog_reload', '1'); } catch (e) {}
+          console.warn('App nicht gestartet, Caches werden bereinigt …');
+          var cleanup = [];
           if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function(regs) {
-              for (var i = 0; i < regs.length; i++) regs[i].unregister();
-            });
+            cleanup.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            }));
           }
           if ('caches' in window) {
-            caches.keys().then(function(keys) {
-              for (var j = 0; j < keys.length; j++) caches.delete(keys[j]);
-            });
+            cleanup.push(caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            }));
           }
-          window.location.reload(true);
+          Promise.all(cleanup).catch(function () {}).then(function () { window.location.reload(); });
         }
-      }, 2800);
-
-      // Service Worker Registrierung mit Auto-Update
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/sw.js').then(function(reg) {
-            reg.addEventListener('updatefound', function() {
-              var newWorker = reg.installing;
-              if (newWorker) {
-                newWorker.addEventListener('statechange', function() {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    window.location.reload();
-                  }
-                });
-              }
-            });
-          }).catch(function(err) {
-            console.warn('SW notice:', err);
-          });
-        });
-      }
+        setTimeout(check, 12000);
+      })();
     </script>
   </body>
 </html>

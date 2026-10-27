@@ -1,165 +1,212 @@
 /**
- * KRAFTSTOFF - Intelligenter Benachrichtigungs- & Alert-Service
- * 
- * Behandelt:
- * 1. Web-Push / Browser-Benachrichtigungen (macOS, Windows, iOS PWA)
- * 2. Akustischen Gong/Chime via Web Audio API (keine externen MP3-Dateien nötig)
- * 3. Automatische Preisschwellen-Prüfung bei neuen Daten
+ * KRAFTSTOFF - Benachrichtigungs- & Alarm-Service
+ *
+ * 1. Mitteilungen über den Service Worker (macOS, iOS ab 16.4 als Home-Bildschirm-App)
+ * 2. Dezenter Signalton per Web Audio API (auf dem iPhone nach der ersten Berührung freigeschaltet)
+ * 3. Automatische Preisalarme bei neuen Daten – solange die App geöffnet ist (respektiert die Pause)
+ *
+ * Bereits gemeldete Tiefpreise werden 24 h gemerkt, damit ein Neustart der App nicht erneut alarmiert.
  */
+
+import { fuelLabel, fmtNum, fmtPrice, fmtKm } from '../utils/format';
+
+const ALERT_LOG_KEY = 'kraftstoff_alert_log';
+const ALERT_LOG_TTL_MS = 24 * 60 * 60 * 1000;
+const SAME_STATION_COOLDOWN_MS = 60 * 60 * 1000;
+const ICON = '/icons/icon-192.png';
+
+function readLog(now = Date.now()) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ALERT_LOG_KEY) || '{}');
+    const out = {};
+    for (const [id, e] of Object.entries(raw || {})) {
+      if (e && Number.isFinite(e.at) && now - e.at < ALERT_LOG_TTL_MS) out[id] = e;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeLog(log) {
+  try {
+    localStorage.setItem(ALERT_LOG_KEY, JSON.stringify(log));
+  } catch {}
+}
 
 class NotificationService {
   constructor() {
-    this.lastNotifiedPrices = {};
     this.audioCtx = null;
+    this.audioArmed = false;
   }
 
-  /**
-   * Erzeugt einen dezenten, edlen Chime-Ton per Web Audio Synthesizer
-   */
+  /** Mitteilungen grundsätzlich möglich (iPhone: nur als Home-Bildschirm-App ab iOS 16.4). */
+  isSupported() {
+    return typeof window !== 'undefined' && 'Notification' in window;
+  }
+
+  /** Läuft als installierte App (Home-Bildschirm / Dock). */
+  isStandalone() {
+    try {
+      return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    } catch {
+      return false;
+    }
+  }
+
+  /** iOS-Safari erlaubt Audio erst nach einer Berührung: Kontext beim ersten Tippen freischalten. */
+  armAudioUnlock() {
+    if (this.audioArmed || typeof document === 'undefined') return;
+    this.audioArmed = true;
+    const unlock = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!this.audioCtx) this.audioCtx = new Ctx();
+        if (this.audioCtx.state === 'suspended') this.audioCtx.resume().catch(() => {});
+      } catch {}
+      document.removeEventListener('pointerdown', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    };
+    document.addEventListener('pointerdown', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+  }
+
   playAlertChime() {
     try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) return;
-
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!this.audioCtx) this.audioCtx = new Ctx();
       const ctx = this.audioCtx;
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 
       const now = ctx.currentTime;
-
-      // 2 harmonische Sinustöne (F4 -> C5, typischer Apple-ähnlicher Notification Ping)
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
-
       osc1.type = 'sine';
       osc2.type = 'sine';
-
-      osc1.frequency.setValueAtTime(587.33, now); // D5
-      osc1.frequency.exponentialRampToValueAtTime(880, now + 0.12); // A5
-
-      osc2.frequency.setValueAtTime(880, now); // A5
-      osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.12); // D6
-
+      osc1.frequency.setValueAtTime(587.33, now);
+      osc1.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+      osc2.frequency.setValueAtTime(880, now);
+      osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.12);
       gain.gain.setValueAtTime(0.12, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
-
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(ctx.destination);
-
       osc1.start(now);
       osc2.start(now);
       osc1.stop(now + 0.6);
       osc2.stop(now + 0.6);
     } catch (e) {
-      console.warn('Audio chime could not be played:', e);
+      console.warn('Signalton konnte nicht abgespielt werden:', e);
     }
   }
 
-  /**
-   * Prüft den aktuellen Berechtigungsstatus
-   */
   getPermission() {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      return 'unsupported';
-    }
+    if (!this.isSupported()) return 'unsupported';
     return Notification.permission;
   }
 
-  /**
-   * Fordert Berechtigung an
-   */
   async requestPermission() {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      throw new Error('Benachrichtigungen werden von diesem Browser nicht unterstützt.');
+    if (!this.isSupported()) {
+      throw new Error(this.isIOS() && !this.isStandalone()
+        ? 'Auf dem iPhone gehen Mitteilungen nur, wenn KRAFTSTOFF über „Teilen → Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).'
+        : 'Dieser Browser unterstützt keine Mitteilungen.');
     }
-    const result = await Notification.requestPermission();
-    return result;
+    return Notification.requestPermission();
   }
 
-  /**
-   * Sendet eine System-Benachrichtigung mit Ton
-   */
-  sendNotification({ title, body, icon = '/icon.svg', tag = 'price-alert', playChime = true }) {
-    if (playChime) {
-      this.playAlertChime();
-    }
-
-    if (this.getPermission() !== 'granted') {
+  isIOS() {
+    try {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    } catch {
       return false;
     }
+  }
 
+  /** Zeigt eine Mitteilung (bevorzugt über den Service Worker, damit ein Tippen die App öffnet). */
+  async sendNotification({ title, body, tag = 'price-alert', playChime = true, url = '/' }) {
+    if (playChime) this.playAlertChime();
+    if (this.getPermission() !== 'granted') return false;
+    const options = {
+      body,
+      icon: ICON,
+      badge: ICON,
+      tag,
+      renotify: true,
+      data: { url },
+    };
     try {
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.ready.then((reg) => {
-          reg.showNotification(title, {
-            body,
-            icon,
-            badge: icon,
-            tag,
-            vibrate: [200, 100, 200],
+      if ('serviceWorker' in navigator) {
+        const reg = await Promise.race([
+          navigator.serviceWorker.getRegistration(),
+          new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+        ]);
+        if (reg && reg.active) {
+          await reg.showNotification(title, {
+            ...options,
+            actions: [
+              { action: 'open', title: 'Öffnen' },
+              { action: 'pause_30', title: '30 Min. pausieren' },
+            ],
           });
-        });
-        return true;
-      } else if ('Notification' in window) {
-        new Notification(title, {
-          body,
-          icon,
-          tag,
-        });
-        return true;
+          return true;
+        }
       }
+      // Ohne Service Worker (z. B. lokaler Test über http): einfache Mitteilung
+      const n = new Notification(title, options);
+      n.onclick = () => {
+        try { window.focus(); } catch {}
+        n.close();
+      };
+      return true;
     } catch (e) {
-      console.warn('Error sending notification:', e);
+      console.warn('Mitteilung konnte nicht gesendet werden:', e);
+      return false;
     }
-    return false;
   }
 
   /**
-   * Prüft eine Liste von Tankstellen und sendet bei Preistiefststand oder Schwellwert einen Alarm
+   * Prüft die bewerteten Stationen und alarmiert, wenn die günstigste geöffnete Station deutlich unter
+   * ihrem üblichen Preis für diese Uhrzeit ODER unter dem Regionsmedian liegt.
    */
-  checkAndTriggerPriceAlerts(stations, settings, fuelType = 'diesel') {
-    if (!stations || stations.length === 0) return;
+  checkAndTriggerPriceAlerts(stations, settings, fuelType = 'diesel', regionNow = null) {
+    if (!Array.isArray(stations) || stations.length === 0) return;
     if (this.getPermission() !== 'granted') return;
+    if (settings?.pausedUntil && Date.now() < new Date(settings.pausedUntil).getTime()) return;
 
-    const thresholdCent = settings?.alertThresholdCent || 3.0;
+    const thresholdCent = Number(settings?.alertThresholdCent) || 3.0;
+    const open = stations.filter((s) => s && s.isOpen !== false && Number.isFinite(s.currentPrice) && !s.isFromCache);
+    if (open.length === 0) return;
+    const cheapest = [...open].sort((a, b) => a.currentPrice - b.currentPrice)[0];
+
     const now = Date.now();
+    const log = readLog(now);
+    const last = log[cheapest.id];
+    // Gleicher Preis bereits gemeldet oder kürzlich gemeldet: still bleiben
+    if (last && (last.price === cheapest.currentPrice || now - last.at < SAME_STATION_COOLDOWN_MS)) return;
 
-    // Suche die günstigste Station
-    const sorted = [...stations].sort((a, b) => a.currentPrice - b.currentPrice);
-    const cheapest = sorted[0];
+    const ownDelta = cheapest.evaluation?.hasHistory ? cheapest.evaluation.deltaCent : null;
+    const regionDelta = Number.isFinite(regionNow?.median) && open.length >= 3 ? (cheapest.currentPrice - regionNow.median) * 100 : null;
 
-    if (!cheapest) return;
-
-    // Nur einmal alle 60 Minuten für dieselbe Station alarmieren, um Spam zu verhindern
-    const lastTime = this.lastNotifiedPrices[cheapest.id] || 0;
-    if (now - lastTime < 60 * 60 * 1000) {
-      return;
+    let reason = null;
+    if (ownDelta !== null && ownDelta <= -thresholdCent) {
+      reason = `${fmtNum(Math.abs(ownDelta), 1)} ct unter ihrem üblichen Preis um diese Zeit`;
+    } else if (regionDelta !== null && regionDelta <= -thresholdCent) {
+      reason = `${fmtNum(Math.abs(regionDelta), 1)} ct unter dem Regionsmedian`;
     }
+    if (!reason) return;
 
-    // Wenn Ersparnis >= Schwellwert oder Preis unter Schwellwert
-    const evalData = cheapest.evaluation;
-    const deltaCent = evalData?.deltaToDynAverage ? evalData.deltaToDynAverage * 100 : 0;
-
-    // Wenn der Preis günstig ist (z.B. >= 3ct unter Marktschnitt)
-    if (deltaCent <= -thresholdCent || evalData?.status === 'FAVORABLE') {
-      this.lastNotifiedPrices[cheapest.id] = now;
-
-      const priceStr = cheapest.currentPrice.toFixed(3).replace('.', ',');
-      const diffStr = Math.abs(deltaCent).toFixed(1).replace('.', ',');
-
-      this.sendNotification({
-        title: `KRAFTSTOFF Alarm ⚡️ ${cheapest.name}`,
-        body: `${fuelType.toUpperCase()} jetzt für ${priceStr} €/L (${diffStr} ct unter Marktschnitt)!`,
-        tag: `price-drop-${cheapest.id}`,
-      });
-    }
+    log[cheapest.id] = { at: now, price: cheapest.currentPrice };
+    writeLog(log);
+    const where = Number.isFinite(cheapest.distanceKm) ? ` • ${fmtKm(cheapest.distanceKm)} entfernt` : '';
+    this.sendNotification({
+      title: `Tankwart-Tipp: ${cheapest.name}`,
+      body: `${fuelLabel(fuelType)} jetzt ${fmtPrice(cheapest.currentPrice)}/L – ${reason}${where}.`,
+      tag: `price-drop-${cheapest.id}`,
+    });
   }
 }
 

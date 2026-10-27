@@ -1,196 +1,171 @@
 /**
- * KRAFTSTOFF - Mathematische Bewertungs-Engine & Adaptive Moving Average (AMA)
- * 
- * Implementiert die Spezifikationsrichtlinien:
- * 1. Berechnung der Standardabweichung (σ) über die letzten 24 Stunden.
- * 2. Dynamische Fensterbreite W_adj = W_base * (1 + (σ / σ_ref)).
- * 3. Gewichteter adaptiver Durchschnitt über das dynamische Zeitfenster.
+ * KRAFTSTOFF - Bewertungs-Engine & Adaptive Moving Average (AMA)
+ *
+ * Bewertet den aktuellen Preis einer Tankstelle gegen ihre EIGENE echte Historie:
+ * 1. Standardabweichung (σ) über die letzten 24 Stunden.
+ * 2. Dynamische Fensterbreite W_adj = W_base * (1 + σ / σ_ref).
+ * 3. Zeitgewichteter adaptiver Durchschnitt über das dynamische Zeitfenster.
  * 4. Schwellenwert-Klassifikation ("Günstig", "Neutral", "Teuer").
+ *
+ * Messpunkte werden im Format { t: ms, p: €/L } erwartet (ältere { timestamp, price } werden akzeptiert).
+ *
+ * Für Aussagen wie "günstiger als sonst" wird – sofern ein Regionsprofil vorliegt – nicht gegen den
+ * Durchschnitt aller Stunden verglichen (der abends fast immer unterboten wird), sondern gegen das,
+ * was die Station UM DIESE UHRZEIT üblicherweise kostet: gleitendes Niveau + Profilwert der Stunde.
  */
 
-// Referenz-Standardabweichung für deutsche Kraftstoffmärkte (typisch ~3.5 bis 4.5 Cent / Liter)
-export const REFERENCE_SIGMA = 0.040; // 4.0 Cent
+import { stationLevelAt, profileEstimateAt } from './regionalTrends';
 
-// Basis-Lookback Fensterbreite: 72 Stunden (3 Tage)
+export const REFERENCE_SIGMA = 0.040; // 4,0 Cent typische Volatilität im deutschen Markt
 export const BASE_WINDOW_HOURS = 72;
+export const DEFAULT_THRESHOLD_CENT = 0.030; // 3,0 Cent
 
-// Standard Schwellenwert: 3 Cent unter Durchschnitt gilt als günstig
-export const DEFAULT_THRESHOLD_CENT = 0.030; // 3.0 Cent
+const HOUR_MS = 60 * 60 * 1000;
 
-/**
- * Berechnet den arithmetischen Mittelwert eines Zahlen-Arrays.
- */
-export function calculateMean(values) {
-  if (!values || values.length === 0) return 0;
-  const sum = values.reduce((acc, v) => acc + v, 0);
-  return sum / values.length;
+function pointTime(e) {
+  if (typeof e.t === 'number') return e.t;
+  return new Date(e.timestamp).getTime();
 }
 
-/**
- * Berechnet die empirische Standardabweichung (σ) einer Preisreihe.
- * @param {number[]} prices - Liste von Preisen in Euro (z.B. [1.749, 1.719, 1.769])
- * @returns {number} Standardabweichung σ
- */
+function pointPrice(e) {
+  return typeof e.p === 'number' ? e.p : e.price;
+}
+
+export function calculateMean(values) {
+  if (!values || values.length === 0) return 0;
+  return values.reduce((acc, v) => acc + v, 0) / values.length;
+}
+
 export function calculateStandardDeviation(prices) {
   if (!prices || prices.length < 2) return 0;
   const mean = calculateMean(prices);
-  const variance = prices.reduce((acc, p) => acc + Math.pow(p - mean, 2), 0) / (prices.length - 1);
+  const variance = prices.reduce((acc, p) => acc + (p - mean) ** 2, 0) / (prices.length - 1);
   return Math.sqrt(variance);
 }
 
-/**
- * Extrahiert die Preise der letzten 24 Stunden aus einer Zeitreihe.
- * @param {Array<{timestamp: string|number|Date, price: number}>} history
- * @param {Date} [currentTime=new Date()]
- * @returns {number[]} Preise der letzten 24h
- */
-export function get24hPrices(history, currentTime = new Date()) {
+/** Preise der letzten 24 Stunden aus einer Messreihe. */
+export function get24hPrices(history, currentTime = Date.now()) {
   if (!history || history.length === 0) return [];
   const refTime = new Date(currentTime).getTime();
-  const past24hTime = refTime - 24 * 60 * 60 * 1000;
-
-  return history
-    .filter((entry) => {
-      const t = new Date(entry.timestamp).getTime();
-      return t >= past24hTime && t <= refTime && typeof entry.price === 'number' && !isNaN(entry.price);
-    })
-    .map((entry) => entry.price);
+  const past = refTime - 24 * HOUR_MS;
+  const out = [];
+  for (const e of history) {
+    const t = pointTime(e);
+    const p = pointPrice(e);
+    if (t >= past && t <= refTime && Number.isFinite(p)) out.push(p);
+  }
+  return out;
 }
 
-/**
- * Skaliert die Fensterbreite W basierend auf der kurzfristigen Volatilität σ:
- * Neues Fenster = W * (1 + (σ / Referenz-σ))
- * 
- * - Hohe Volatilität: Fenster wächst (bis zu z.B. 144h), um hektische Preissprünge zu glätten.
- * - Geringe Volatilität: Fenster schrumpft (Richtung 36h-48h), um rasch auf neue echte Preistrends anzuspringen.
- */
+/** Adaptive Fensterbreite: wächst bei hoher Volatilität (glättet), schrumpft bei ruhigem Markt. */
 export function calculateAdaptiveWindowHours(sigma, baseWindowHours = BASE_WINDOW_HOURS, refSigma = REFERENCE_SIGMA) {
   const safeSigma = Math.max(0, sigma || 0);
-  const scaling = safeSigma / refSigma;
-  // Bounded between 24 hours and 144 hours (6 days)
-  const windowHours = baseWindowHours * (1 + scaling);
+  const windowHours = baseWindowHours * (1 + safeSigma / refSigma);
   return Math.min(144, Math.max(24, Math.round(windowHours)));
 }
 
 /**
- * Berechnet den Adaptive Moving Average (dynamischer Durchschnitt)
- * für den aktuellen Zeitpunkt unter Berücksichtigung des berechneten Fensters.
- * 
- * Verwendet exponentiell abklingende Gewichte (EMA-Hybrid), sodass nähere Zeitpunkte
- * höheres Gewicht haben, aber das Gesamtfenster W_adj die Dämpfung steuert.
+ * Zeitgewichteter Durchschnitt (exponentiell abklingende Gewichte) über das Fenster.
+ * Da Tankpreise Treppenfunktionen sind, wird jeder Messpunkt mit der Dauer gewichtet,
+ * für die er gültig war (bis zum nächsten Punkt, maximal 3 Stunden).
  */
-export function calculateAdaptiveMovingAverage(history, windowHours, currentTime = new Date()) {
+export function calculateAdaptiveMovingAverage(history, windowHours, currentTime = Date.now()) {
   if (!history || history.length === 0) return null;
-
   const refTime = new Date(currentTime).getTime();
-  const windowStart = refTime - windowHours * 60 * 60 * 1000;
+  const windowStart = refTime - windowHours * HOUR_MS;
+  const lambda = 1.8 / windowHours;
 
-  const validEntries = history.filter((entry) => {
-    const t = new Date(entry.timestamp).getTime();
-    return t >= windowStart && t <= refTime && typeof entry.price === 'number' && !isNaN(entry.price);
-  });
-
-  if (validEntries.length === 0) return null;
-
-  // Gewichtung: Lineare / exponentielle Zeitgewichtung zur Dämpfung
   let totalWeight = 0;
   let weightedSum = 0;
-
-  validEntries.forEach((entry) => {
-    const t = new Date(entry.timestamp).getTime();
-    const ageHours = (refTime - t) / (60 * 60 * 1000);
-    // Exponentielles Gewicht: Neuere Werte wiegen mehr
-    const lambda = 1.8 / windowHours;
-    const weight = Math.exp(-lambda * ageHours);
-
-    weightedSum += entry.price * weight;
+  for (let i = 0; i < history.length; i++) {
+    const t = pointTime(history[i]);
+    const p = pointPrice(history[i]);
+    if (!Number.isFinite(p) || t > refTime) continue;
+    const next = i + 1 < history.length ? Math.min(refTime, pointTime(history[i + 1])) : refTime;
+    const validUntil = Math.min(next, t + 3 * HOUR_MS);
+    if (validUntil < windowStart) continue;
+    const from = Math.max(t, windowStart);
+    const durationH = Math.max(0.25, (validUntil - from) / HOUR_MS);
+    const ageHours = (refTime - (from + validUntil) / 2) / HOUR_MS;
+    const weight = Math.exp(-lambda * Math.max(0, ageHours)) * durationH;
+    weightedSum += p * weight;
     totalWeight += weight;
-  });
-
+  }
+  if (totalWeight === 0) return null;
   return weightedSum / totalWeight;
 }
 
 /**
- * Führt die vollständige Bewertung eines aktuellen Preises durch.
- * 
- * @param {Object} params
- * @param {number} params.currentPrice - Der aktuelle Preis in Euro
- * @param {Array<{timestamp: string, price: number}>} params.history - Historische Preise
- * @param {number} [params.thresholdCent=0.030] - Schwellenwert in Euro (z.B. 0.030 für 3 Cent)
- * @param {number} [params.taxReliefCent=0] - Aktiver gesetzlicher Rabatt/Aufschlag
- * @returns {Object} Bewertungsergebnis
+ * Vollständige Bewertung eines aktuellen Preises gegen die eigene Historie.
+ * @returns {Object} u.a. effectiveDynAverage, deltaCent, verdict, isCheap, sampleCount, hasHistory
  */
 export function evaluatePriceEngine({
   currentPrice,
   history = [],
   thresholdCent = DEFAULT_THRESHOLD_CENT,
-  taxReliefCent = 0,
-  currentTime = new Date()
+  currentTime = Date.now(),
+  profile = null,
 }) {
-  // 1. Extrahiere Preise der letzten 24h
+  const safePrice = Number.isFinite(currentPrice) ? currentPrice : 0;
+  const sampleCount = Array.isArray(history) ? history.length : 0;
+
   const prices24h = get24hPrices(history, currentTime);
-  
-  // Falls keine oder wenig Historie, fallback auf den aktuellen Preis
-  const fullPriceSeries = prices24h.length >= 2 ? prices24h : (history.map(h => h.price).concat([currentPrice]));
-  
-  // 2. Berechne Standardabweichung σ
-  const sigma = calculateStandardDeviation(fullPriceSeries);
+  const series = prices24h.length >= 2 ? prices24h : history.map(pointPrice).concat([safePrice]).filter(Number.isFinite);
+  const sigma = calculateStandardDeviation(series);
+  const adaptiveWindowHours = calculateAdaptiveWindowHours(sigma);
 
-  // 3. Berechne adaptives Zeitfenster W_adj
-  const adaptiveWindowHours = calculateAdaptiveWindowHours(sigma, BASE_WINDOW_HOURS, REFERENCE_SIGMA);
+  const dynAverageRaw = calculateAdaptiveMovingAverage(history, adaptiveWindowHours, currentTime);
+  const hasAmaHistory = dynAverageRaw !== null && sampleCount >= 3;
+  const effectiveDynAverage = hasAmaHistory ? dynAverageRaw : safePrice;
 
-  // 4. Berechne dynamischen gleitenden Durchschnitt
-  const dynAverageRaw = calculateAdaptiveMovingAverage(history, adaptiveWindowHours, currentTime) || currentPrice;
-  
-  // Berücksichtigung externer Gesetze & Steueranpassungen
-  const effectiveDynAverage = dynAverageRaw + (taxReliefCent / 100);
-  
-  // 5. Differenz und Schwellenwert-Prüfung
-  const delta = currentPrice - effectiveDynAverage; // Negativ = günstiger als Durchschnitt
-  const deltaCent = delta * 100; // in Cent
+  // Erwartung für genau diese Uhrzeit: gleitendes 48-h-Niveau der Station + Profilwert der aktuellen Stunde
+  let expectedNow = null;
+  if (profile && sampleCount >= 3 && typeof history[0]?.t === 'number') {
+    const estFn = (h) => profile.hourOfDay?.[h]?.est ?? 0;
+    const level = stationLevelAt(history, currentTime, estFn, 48 * HOUR_MS);
+    if (level !== null) expectedNow = level + profileEstimateAt(profile, currentTime).est / 100;
+  }
+  const hasHistory = expectedNow !== null;
+  const reference = hasHistory ? expectedNow : effectiveDynAverage;
 
-  // Status Klassifizierung
-  let verdict = 'NEUTRAL'; // 'CHEAP' | 'NEUTRAL' | 'EXPENSIVE'
-  let label = 'Normaler Preis';
-  let badgeColor = 'neutral'; // 'favorable' | 'neutral' | 'unfavorable'
+  const delta = safePrice - reference;
+  const deltaCent = delta * 100;
 
-  if (delta <= -thresholdCent) {
+  let verdict = 'NEUTRAL';
+  let label = hasHistory ? 'Üblich für diese Uhrzeit' : 'Noch zu wenig eigene Daten';
+  let badgeColor = 'neutral';
+  if (hasHistory && delta <= -thresholdCent) {
     verdict = 'CHEAP';
-    label = 'Aktuell günstig';
+    label = 'Günstiger als sonst um diese Zeit';
     badgeColor = 'favorable';
-  } else if (delta >= thresholdCent) {
+  } else if (hasHistory && delta >= thresholdCent) {
     verdict = 'EXPENSIVE';
-    label = 'Erhöhter Preis';
+    label = 'Teurer als sonst um diese Zeit';
     badgeColor = 'unfavorable';
   }
 
-  // Volatilitätsgrad
   let volatilityLevel = 'MODERAT';
-  if (sigma < 0.02) {
-    volatilityLevel = 'NIEDRIG (Stabiler Trend)';
-  } else if (sigma > 0.055) {
-    volatilityLevel = 'HOCH (Starke Preissprünge)';
-  }
-
-  // Statistische Basis-Score (0-100)
-  // Günstiger Preis (-6 ct) -> ~90-100 Score. Teurer Preis (+6 ct) -> ~10-20 Score.
-  const rawScore = 50 - (deltaCent * 8);
-  const score = Math.max(1, Math.min(100, Math.round(rawScore)));
+  if (sigma < 0.02) volatilityLevel = 'NIEDRIG';
+  else if (sigma > 0.055) volatilityLevel = 'HOCH';
 
   return {
-    currentPrice,
-    effectiveDynAverage: parseFloat(effectiveDynAverage.toFixed(3)),
-    sigma: parseFloat(sigma.toFixed(4)),
-    sigmaCent: parseFloat((sigma * 100).toFixed(2)),
+    currentPrice: safePrice,
+    expectedNow: expectedNow === null ? null : Math.round(expectedNow * 1000) / 1000,
+    basis: hasHistory ? 'hourly' : 'none',
+    hasAmaHistory,
+    effectiveDynAverage: Math.round(effectiveDynAverage * 1000) / 1000,
+    sigma: Math.round(sigma * 10000) / 10000,
+    sigmaCent: Math.round(sigma * 10000) / 100,
     adaptiveWindowHours,
-    delta: parseFloat(delta.toFixed(3)),
-    deltaCent: parseFloat(deltaCent.toFixed(1)),
-    thresholdCent: parseFloat((thresholdCent * 100).toFixed(1)),
+    delta: Math.round(delta * 1000) / 1000,
+    deltaCent: Math.round(deltaCent * 10) / 10,
+    thresholdCent: Math.round(thresholdCent * 1000) / 10,
     isCheap: verdict === 'CHEAP',
     verdict,
     label,
     badgeColor,
     volatilityLevel,
-    score
+    sampleCount,
+    hasHistory,
   };
 }

@@ -1,239 +1,306 @@
 /**
- * KRAFTSTOFF - Gespeicherte Routen & OpenStreetMap OSRM Korridor-Routing
- * 
- * Berechnet reale Fahrstrecken von Ort 1 nach Ort 2 per OpenStreetMap OSRM Engine.
- * Ermittelt für jede Tankstelle exakt die zusätzlichen Mehr-Kilometer beim Tankvorgang!
- * Inklusive hochpräziser Punkt-zu-Strecken-Projektion (Point-to-Segment) und Multi-Query-Sampling!
+ * KRAFTSTOFF - Gespeicherte Routen, Fahrten & Korridor-Geometrie
+ *
+ * - Reale Straßenrouten über OSRM (zwei öffentliche Server, sonst ehrlich gekennzeichnete Luftlinie).
+ * - Die Linienführung wird beim Anlegen vereinfacht (Douglas-Peucker, ~25 m), das spart Speicher und Rechenzeit.
+ * - Korridor-Filter: Abstand jeder Tankstelle zur Strecke und Kilometerstand entlang der Route, mit
+ *   vorberechneter Geometrie (flache km-Koordinaten + Abschnitts-Boxen) – schnell genug fürs iPhone.
+ * - Abfrageplan: Kreise entlang der Strecke so gesetzt, dass der Korridor lückenlos abgedeckt ist.
  */
 
 import { calculateHaversineDistance } from './locationService';
 
 const STORAGE_KEY = 'kraftstoff_user_routes';
 const ACTIVE_ROUTE_KEY = 'kraftstoff_active_route_id';
-
-export const INITIAL_ROUTES = [
-  {
-    id: 'route-work-commute',
-    name: 'Täglicher Arbeitsweg (Ost-West)',
-    description: 'Alexanderplatz ➔ Tiergarten ➔ Charlottenburg',
-    startName: 'Berlin Alexanderplatz',
-    startCoords: { lat: 52.5219, lng: 13.4132 },
-    endName: 'Bismarckstraße Charlottenburg',
-    endCoords: { lat: 52.5115, lng: 13.3050 },
-    totalDistanceKm: 8.5,
-    corridorRadiusKm: 2.5,
-    waypoints: [
-      { lat: 52.5219, lng: 13.4132, name: 'Start: Alexanderplatz' },
-      { lat: 52.5163, lng: 13.3777, name: 'Brandenburger Tor' },
-      { lat: 52.5085, lng: 13.3756, name: 'Potsdamer Platz' },
-      { lat: 52.5050, lng: 13.3350, name: 'Wittenbergplatz' },
-      { lat: 52.5115, lng: 13.3050, name: 'Ziel: Charlottenburg' },
-    ],
-  },
-  {
-    id: 'route-south-corridor',
-    name: 'Süd-Achse (Mitte ➔ Steglitz)',
-    description: 'Kreuzberg ➔ Schöneberg ➔ Steglitz',
-    startName: 'Mehringdamm Kreuzberg',
-    startCoords: { lat: 52.4920, lng: 13.3880 },
-    endName: 'Schloßstraße Steglitz',
-    endCoords: { lat: 52.4580, lng: 13.3220 },
-    totalDistanceKm: 6.8,
-    corridorRadiusKm: 2.0,
-    waypoints: [
-      { lat: 52.4920, lng: 13.3880, name: 'Mehringdamm' },
-      { lat: 52.4850, lng: 13.3540, name: 'Hauptstraße Schöneberg' },
-      { lat: 52.4580, lng: 13.3220, name: 'Steglitz Schloßstr.' },
-    ],
-  },
+const EARTH_KM_PER_DEG = 111.32;
+const SIMPLIFY_TOLERANCE_KM = 0.025;
+const MAX_STORED_POINTS = 2500;
+const CHUNK_SIZE = 48;
+const OSRM_TIMEOUT_MS = 9000;
+const OSRM_SERVERS = [
+  'https://router.project-osrm.org/route/v1/driving',
+  'https://routing.openstreetmap.de/routed-car/route/v1/driving',
 ];
 
+// Keine vorgefertigten Demo-Routen: Routen legt der Nutzer selbst an.
+export const INITIAL_ROUTES = [];
+/** Wählbare Korridor-Breiten (±km) – 2,5 km ist der Standard. */
+export const CORRIDOR_OPTIONS = [1, 2.5, 3.5, 5];
+export const DEFAULT_CORRIDOR_KM = 2.5;
+/** Abfrageplan deckt immer den breitesten Korridor ab, damit ein Wechsel keinen Neuabruf braucht. */
+const PLAN_CORRIDOR_KM = 5;
+
+// ---------------------------------------------------------------------------- Geometrie-Helfer
+
 /**
- * Berechnet den exakten minimalen Abstand (in Kilometern) eines Punktes P (Tankstelle)
- * zu einem Liniensegment zwischen A und B mittels geodätischer Projektion.
- * Berücksichtigt nicht nur Eckpunkte, sondern die gesamte Straßenlinie!
+ * Minimaler Abstand (km) eines Punktes P zu einem Segment A–B (lokale Projektion) inkl. Projektionsanteil.
  */
 export function calculateDistancePointToSegmentKm(pLat, pLng, aLat, aLng, bLat, bLng) {
-  const meanLat = (((aLat + bLat) / 2) * Math.PI) / 180;
-  const cosLat = Math.cos(meanLat);
-
-  // Koordinaten in Kilometer relativ zu Punkt A
-  const bx = (bLng - aLng) * (Math.PI / 180) * 6371 * cosLat;
-  const by = (bLat - aLat) * (Math.PI / 180) * 6371;
-  const px = (pLng - aLng) * (Math.PI / 180) * 6371 * cosLat;
-  const py = (pLat - aLat) * (Math.PI / 180) * 6371;
-
+  const cosLat = Math.cos((((aLat + bLat) / 2) * Math.PI) / 180);
+  const bx = (bLng - aLng) * EARTH_KM_PER_DEG * cosLat;
+  const by = (bLat - aLat) * EARTH_KM_PER_DEG;
+  const px = (pLng - aLng) * EARTH_KM_PER_DEG * cosLat;
+  const py = (pLat - aLat) * EARTH_KM_PER_DEG;
   const segLenSq = bx * bx + by * by;
-  if (segLenSq < 1e-8) {
-    return {
-      distanceKm: calculateHaversineDistance(pLat, pLng, aLat, aLng),
-      fraction: 0,
-      projLat: aLat,
-      projLng: aLng,
-      segLenKm: 0,
-    };
-  }
-
-  // Projektionsfaktor t entlang des Segments AB [0 = Punkt A, 1 = Punkt B]
-  const t = Math.max(0, Math.min(1, (px * bx + py * by) / segLenSq));
-  const projX = t * bx;
-  const projY = t * by;
-  const dx = px - projX;
-  const dy = py - projY;
-  const distanceKm = Math.sqrt(dx * dx + dy * dy);
-  const segLenKm = Math.sqrt(segLenSq);
-
+  const t = segLenSq < 1e-10 ? 0 : Math.max(0, Math.min(1, (px * bx + py * by) / segLenSq));
+  const dx = px - t * bx;
+  const dy = py - t * by;
   return {
-    distanceKm: parseFloat(distanceKm.toFixed(3)),
+    distanceKm: Math.sqrt(dx * dx + dy * dy),
     fraction: t,
     projLat: aLat + t * (bLat - aLat),
     projLng: aLng + t * (bLng - aLng),
-    segLenKm: parseFloat(segLenKm.toFixed(3)),
+    segLenKm: Math.sqrt(segLenSq),
   };
 }
 
-/**
- * Wandelt die Wegpunkte oder Polyline-Koordinaten einer Route in eine flache Punktliste um.
- */
+/** Linienführung einer Route als Liste {lat, lng}. */
 export function getRoutePoints(route) {
   if (!route) return [];
-  if (Array.isArray(route.polylineCoords) && route.polylineCoords.length > 1) {
-    return route.polylineCoords.map((c) => {
-      if (Array.isArray(c)) return { lat: c[0], lng: c[1] };
-      return { lat: c.lat, lng: c.lng };
-    });
-  }
-  if (Array.isArray(route.waypoints) && route.waypoints.length > 1) {
-    return route.waypoints.map((w) => {
-      if (Array.isArray(w)) return { lat: w[0], lng: w[1] };
-      return { lat: w.lat, lng: w.lng };
-    });
-  }
+  const toPt = (c) => (Array.isArray(c) ? { lat: Number(c[0]), lng: Number(c[1]) } : { lat: Number(c?.lat), lng: Number(c?.lng) });
+  const valid = (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng);
+  if (Array.isArray(route.polylineCoords) && route.polylineCoords.length > 1) return route.polylineCoords.map(toPt).filter(valid);
+  if (Array.isArray(route.waypoints) && route.waypoints.length > 1) return route.waypoints.map(toPt).filter(valid);
   const pts = [];
-  if (route.startCoords?.lat && route.startCoords?.lng) pts.push(route.startCoords);
-  if (route.endCoords?.lat && route.endCoords?.lng) pts.push(route.endCoords);
-  return pts;
+  if (route.startCoords) pts.push(toPt(route.startCoords));
+  if (route.endCoords) pts.push(toPt(route.endCoords));
+  return pts.filter(valid);
+}
+
+/** Douglas-Peucker-Vereinfachung einer [lat, lng]-Liste (iterativ, Toleranz in km). */
+export function simplifyPolyline(coords, toleranceKm = SIMPLIFY_TOLERANCE_KM) {
+  if (!Array.isArray(coords) || coords.length <= 2) return coords || [];
+  const n = coords.length;
+  const refLat = coords.reduce((s, c) => s + c[0], 0) / n;
+  const cosLat = Math.cos((refLat * Math.PI) / 180);
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    xs[i] = coords[i][1] * EARTH_KM_PER_DEG * cosLat;
+    ys[i] = coords[i][0] * EARTH_KM_PER_DEG;
+  }
+  const keep = new Uint8Array(n);
+  keep[0] = 1;
+  keep[n - 1] = 1;
+  const stack = [[0, n - 1]];
+  const tolSq = toleranceKm * toleranceKm;
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const ax = xs[a];
+    const ay = ys[a];
+    const vx = xs[b] - ax;
+    const vy = ys[b] - ay;
+    const lenSq = vx * vx + vy * vy;
+    let maxD = -1;
+    let idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      let dx = xs[i] - ax;
+      let dy = ys[i] - ay;
+      if (lenSq > 1e-12) {
+        const t = Math.max(0, Math.min(1, (dx * vx + dy * vy) / lenSq));
+        dx -= t * vx;
+        dy -= t * vy;
+      }
+      const d = dx * dx + dy * dy;
+      if (d > maxD) {
+        maxD = d;
+        idx = i;
+      }
+    }
+    if (idx > 0 && maxD > tolSq) {
+      keep[idx] = 1;
+      stack.push([a, idx], [idx, b]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push([Math.round(coords[i][0] * 1e5) / 1e5, Math.round(coords[i][1] * 1e5) / 1e5]);
+  // Sehr lange Strecken zusätzlich ausdünnen
+  if (out.length > MAX_STORED_POINTS) return simplifyPolyline(out, toleranceKm * 2);
+  return out;
+}
+
+// Vorberechnete Geometrie je Route (lokale km-Koordinaten, kumulierte km, Abschnitts-Boxen)
+const geometryCache = new Map();
+
+function getRouteGeometry(route) {
+  const pts = getRoutePoints(route);
+  if (pts.length < 2) return null;
+  const key = `${route.id || ''}|${pts.length}|${pts[0].lat},${pts[0].lng}|${pts[pts.length - 1].lat},${pts[pts.length - 1].lng}`;
+  const hit = geometryCache.get(key);
+  if (hit) return hit;
+
+  const n = pts.length;
+  const refLat = pts.reduce((s, p) => s + p.lat, 0) / n;
+  const cosLat = Math.cos((refLat * Math.PI) / 180);
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  const cum = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    xs[i] = pts[i].lng * EARTH_KM_PER_DEG * cosLat;
+    ys[i] = pts[i].lat * EARTH_KM_PER_DEG;
+    if (i > 0) cum[i] = cum[i - 1] + Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+  }
+  const chunks = [];
+  for (let s = 0; s < n - 1; s += CHUNK_SIZE) {
+    const e = Math.min(n - 1, s + CHUNK_SIZE);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = s; i <= e; i++) {
+      if (xs[i] < minX) minX = xs[i];
+      if (xs[i] > maxX) maxX = xs[i];
+      if (ys[i] < minY) minY = ys[i];
+      if (ys[i] > maxY) maxY = ys[i];
+    }
+    chunks.push({ s, e, minX, maxX, minY, maxY });
+  }
+  const geo = { pts, xs, ys, cum, cosLat, totalKm: cum[n - 1], chunks };
+  geometryCache.set(key, geo);
+  if (geometryCache.size > 12) geometryCache.delete(geometryCache.keys().next().value);
+  return geo;
 }
 
 /**
- * Berechnet für eine Tankstelle den minimalen Abstand zur Route sowie den genauen
- * Fortschritt (Kilometerstand ab Start) entlang der Route.
+ * Abstand einer Position zur Route und Kilometerstand entlang der Route (ab Start).
+ * @returns {{minDistanceKm:number, kmAlongRoute:number, totalRouteKm:number, progressPct:number, segmentIndex:number}}
  */
 export function findClosestPointOnRoute(stationLat, stationLng, route) {
-  const points = getRoutePoints(route);
-  if (points.length < 2) {
-    const singleDist = points[0] ? calculateHaversineDistance(stationLat, stationLng, points[0].lat, points[0].lng) : 999;
-    return {
-      minDistanceKm: singleDist,
-      kmAlongRoute: 0,
-      totalRouteKm: 0,
-      progressPct: 0,
-      segmentIndex: 0,
-    };
+  const geo = getRouteGeometry(route);
+  if (!geo) {
+    const pts = getRoutePoints(route);
+    const d = pts[0] ? calculateHaversineDistance(stationLat, stationLng, pts[0].lat, pts[0].lng) : 999;
+    return { minDistanceKm: d, kmAlongRoute: 0, totalRouteKm: 0, progressPct: 0, segmentIndex: 0 };
   }
+  const { xs, ys, cum, cosLat, chunks } = geo;
+  const px = stationLng * EARTH_KM_PER_DEG * cosLat;
+  const py = stationLat * EARTH_KM_PER_DEG;
 
-  let totalRouteKm = 0;
-  const segmentLengths = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const d = calculateHaversineDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
-    segmentLengths.push(d);
-    totalRouteKm += d;
-  }
+  let bestSq = Infinity;
+  let bestKm = 0;
+  let bestSeg = 0;
+  // Abschnitte nach Box-Abstand sortieren, damit früh ein guter Kandidat feststeht
+  const order = chunks
+    .map((c, i) => {
+      const dx = Math.max(c.minX - px, 0, px - c.maxX);
+      const dy = Math.max(c.minY - py, 0, py - c.maxY);
+      return { i, d: dx * dx + dy * dy };
+    })
+    .sort((a, b) => a.d - b.d);
 
-  let minDistanceKm = 9999;
-  let kmAlongRoute = 0;
-  let bestSegIndex = 0;
-  let cumulativeKm = 0;
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    const segProj = calculateDistancePointToSegmentKm(stationLat, stationLng, a.lat, a.lng, b.lat, b.lng);
-
-    if (segProj.distanceKm < minDistanceKm) {
-      minDistanceKm = segProj.distanceKm;
-      bestSegIndex = i;
-      kmAlongRoute = cumulativeKm + segProj.fraction * (segmentLengths[i] || 0);
+  for (const { i, d } of order) {
+    if (d > bestSq) break;
+    const c = chunks[i];
+    for (let k = c.s; k < c.e; k++) {
+      const ax = xs[k];
+      const ay = ys[k];
+      const vx = xs[k + 1] - ax;
+      const vy = ys[k + 1] - ay;
+      const lenSq = vx * vx + vy * vy;
+      let t = 0;
+      if (lenSq > 1e-12) t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / lenSq));
+      const dx = px - (ax + t * vx);
+      const dy = py - (ay + t * vy);
+      const dsq = dx * dx + dy * dy;
+      if (dsq < bestSq) {
+        bestSq = dsq;
+        bestSeg = k;
+        bestKm = cum[k] + t * Math.sqrt(lenSq);
+      }
     }
-    cumulativeKm += segmentLengths[i] || 0;
   }
 
-  const effectiveTotal = route.totalDistanceKm || totalRouteKm || 1;
-  const progressPct = Math.min(100, Math.max(0, Math.round((kmAlongRoute / effectiveTotal) * 100)));
-
+  const geoTotal = geo.totalKm || 1;
+  // Kilometerangaben auf die echte Straßenlänge skalieren (falls bekannt)
+  const total = Number(route.totalDistanceKm) > 0 ? Number(route.totalDistanceKm) : geoTotal;
+  const kmAlongRoute = (bestKm / geoTotal) * total;
   return {
-    minDistanceKm: parseFloat(minDistanceKm.toFixed(2)),
-    kmAlongRoute: parseFloat(kmAlongRoute.toFixed(1)),
-    totalRouteKm: parseFloat(effectiveTotal.toFixed(1)),
-    progressPct,
-    segmentIndex: bestSegIndex,
+    minDistanceKm: Math.round(Math.sqrt(bestSq) * 100) / 100,
+    kmAlongRoute: Math.round(kmAlongRoute * 10) / 10,
+    totalRouteKm: Math.round(total * 10) / 10,
+    progressPct: Math.min(100, Math.max(0, Math.round((kmAlongRoute / total) * 100))),
+    segmentIndex: bestSeg,
   };
 }
 
 /**
- * Generiert optimierte Abfrage-Zentren entlang einer Route für die Tankerkönig API.
- * Die API erlaubt max. 25 km Radius. Wir setzen Kreise im Abstand von 16 km mit Radius 15 km,
- * sodass 100% des Korridors lückenlos abgedeckt werden!
+ * Abfrageplan für die Tankerkönig-Umkreissuche entlang einer Route.
+ * Kreise mit Radius R im Abstand s = 2·√(R² − (Korridor+1)²) decken den Korridor lückenlos ab.
+ * @returns {{centers:Array<{lat:number,lng:number,radiusKm:number}>, totalKm:number, coveredKm:number, truncated:boolean}}
  */
-export function sampleRouteQueryPoints(route, stepKm = 16, maxPoints = 5) {
-  const points = getRoutePoints(route);
-  if (points.length < 2) {
-    if (points[0]) return [{ lat: points[0].lat, lng: points[0].lng, radiusKm: 15 }];
-    return [];
+export function planRouteQueries(route, { corridorKm = PLAN_CORRIDOR_KM, maxCalls = 30 } = {}) {
+  const geo = getRouteGeometry(route);
+  if (!geo) {
+    const pts = getRoutePoints(route);
+    return { centers: pts[0] ? [{ lat: pts[0].lat, lng: pts[0].lng, radiusKm: 10 }] : [], totalKm: 0, coveredKm: 0, truncated: false };
   }
+  const { pts, cum, totalKm } = geo;
+  const margin = corridorKm + 1;
+  const spacingFor = (r) => 2 * Math.sqrt(Math.max(1, r * r - margin * margin));
 
-  // 1. Berechne kumulative Distanzen aller Wegpunkte
-  let totalKm = 0;
-  const distFromStart = [0];
-  for (let i = 0; i < points.length - 1; i++) {
-    totalKm += calculateHaversineDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
-    distFromStart.push(totalKm);
+  let rMax = 20;
+  let n = Math.max(1, Math.ceil(totalKm / spacingFor(rMax)));
+  if (n > maxCalls) {
+    rMax = 25;
+    n = Math.max(1, Math.ceil(totalKm / spacingFor(rMax)));
   }
-
-  // Wenn die Route kurz ist (<= 15 km), genügen Start & Ziel (oder Mittelpunkt)
-  if (totalKm <= 12) {
-    const midIdx = Math.floor(points.length / 2);
-    return [
-      { lat: points[midIdx].lat, lng: points[midIdx].lng, radiusKm: Math.min(15, Math.max(8, Math.round(totalKm + 4))) }
-    ];
+  let truncated = false;
+  let coveredKm = totalKm;
+  if (n > maxCalls) {
+    truncated = true;
+    n = maxCalls;
+    coveredKm = n * spacingFor(rMax);
   }
+  const step = Math.min(totalKm, coveredKm) / n;
+  // Kleinster Radius, der den eigenen Abschnitt samt Korridor abdeckt (weniger Daten bei kurzen Strecken)
+  const radiusKm = Math.min(rMax, Math.max(5, Math.ceil(Math.sqrt((step / 2) ** 2 + margin * margin) + 0.5)));
 
-  // 2. Bestimme Abtastabstände
-  const numSteps = Math.min(maxPoints, Math.max(2, Math.ceil(totalKm / stepKm)));
-  const targetDistances = [];
-  for (let s = 0; s < numSteps; s++) {
-    targetDistances.push((s / (numSteps - 1)) * totalKm);
+  const centers = [];
+  let seg = 0;
+  for (let k = 0; k < n; k++) {
+    const target = (k + 0.5) * step;
+    while (seg < cum.length - 2 && cum[seg + 1] < target) seg++;
+    const segLen = cum[seg + 1] - cum[seg];
+    const f = segLen > 0 ? (target - cum[seg]) / segLen : 0;
+    const a = pts[seg];
+    const b = pts[seg + 1] || a;
+    centers.push({
+      lat: Math.round((a.lat + f * (b.lat - a.lat)) * 1e5) / 1e5,
+      lng: Math.round((a.lng + f * (b.lng - a.lng)) * 1e5) / 1e5,
+      radiusKm,
+    });
   }
+  const geoTotal = geo.totalKm || 1;
+  const roadTotal = Number(route.totalDistanceKm) > 0 ? Number(route.totalDistanceKm) : geoTotal;
+  const scale = roadTotal / geoTotal;
+  return {
+    centers,
+    totalKm: Math.round(roadTotal * 10) / 10,
+    coveredKm: Math.round(Math.min(totalKm, coveredKm) * scale * 10) / 10,
+    truncated,
+  };
+}
 
-  // 3. Finde für jede Zieldistanz die passenden Koordinaten auf der Polyline
-  const sampleCenters = [];
-  for (const targetD of targetDistances) {
-    let segIdx = 0;
-    while (segIdx < distFromStart.length - 2 && distFromStart[segIdx + 1] < targetD) {
-      segIdx++;
-    }
-    const d0 = distFromStart[segIdx];
-    const d1 = distFromStart[segIdx + 1] || totalKm;
-    const segLen = d1 - d0;
-    const frac = segLen > 0 ? (targetD - d0) / segLen : 0;
+/** Kompatibilität: nur die Abfragezentren. */
+export function sampleRouteQueryPoints(route, options) {
+  return planRouteQueries(route, options).centers;
+}
 
-    const p0 = points[segIdx];
-    const p1 = points[segIdx + 1] || points[segIdx];
-    const lat = parseFloat((p0.lat + frac * (p1.lat - p0.lat)).toFixed(5));
-    const lng = parseFloat((p0.lng + frac * (p1.lng - p0.lng)).toFixed(5));
-
-    // Vermeide doppelte Punkte
-    const isDuplicate = sampleCenters.some((c) => calculateHaversineDistance(c.lat, c.lng, lat, lng) < 4);
-    if (!isDuplicate) {
-      sampleCenters.push({
-        lat,
-        lng,
-        radiusKm: 14, // 14 km Radius sorgt bei 16 km Schrittweite für perfekte Überlappung
-      });
-    }
+/** Vereinfacht gespeicherte Routen älterer Versionen (riesige Linien, doppelte Wegpunkte). */
+function compactRoute(r) {
+  if (!r || typeof r !== 'object') return r;
+  let changed = false;
+  let polylineCoords = Array.isArray(r.polylineCoords) ? r.polylineCoords : [];
+  if (polylineCoords.length > MAX_STORED_POINTS) {
+    polylineCoords = simplifyPolyline(polylineCoords.map((c) => (Array.isArray(c) ? c : [c.lat, c.lng])));
+    changed = true;
   }
-
-  return sampleCenters;
+  let waypoints = r.waypoints;
+  if (Array.isArray(waypoints) && waypoints.length > 2 && polylineCoords.length > 1) {
+    waypoints = [waypoints[0], waypoints[waypoints.length - 1]];
+    changed = true;
+  }
+  return changed ? { ...r, polylineCoords, waypoints } : r;
 }
 
 class RouteService {
@@ -245,7 +312,16 @@ class RouteService {
   loadRoutes() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const compacted = parsed.map(compactRoute);
+          if (compacted.some((r, i) => r !== parsed[i])) {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(compacted)); } catch {}
+          }
+          return compacted;
+        }
+      }
     } catch {}
     return [...INITIAL_ROUTES];
   }
@@ -253,18 +329,19 @@ class RouteService {
   loadActiveRouteId() {
     try {
       const stored = localStorage.getItem(ACTIVE_ROUTE_KEY);
-      if (stored) return stored;
+      if (stored && this.routes.some((r) => r.id === stored)) return stored;
     } catch {}
     return null;
   }
 
   saveRoutes(newRoutes) {
-    this.routes = newRoutes;
+    this.routes = (Array.isArray(newRoutes) ? newRoutes : []).map(compactRoute);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newRoutes));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.routes));
     } catch (e) {
-      console.warn('Could not persist routes:', e);
+      console.warn('Routen konnten nicht gespeichert werden:', e);
     }
+    if (this.activeRouteId && !this.routes.some((r) => r.id === this.activeRouteId)) this.setActiveRouteId(null);
     return this.routes;
   }
 
@@ -273,194 +350,204 @@ class RouteService {
     return this.routes.find((r) => r.id === this.activeRouteId) || null;
   }
 
+  getRoute(id) {
+    return this.routes.find((r) => r.id === id) || null;
+  }
+
   setActiveRouteId(id) {
-    this.activeRouteId = id;
+    this.activeRouteId = id && this.routes.some((r) => r.id === id) ? id : null;
     try {
-      if (id) {
-        localStorage.setItem(ACTIVE_ROUTE_KEY, id);
-      } else {
-        localStorage.removeItem(ACTIVE_ROUTE_KEY);
-      }
+      if (this.activeRouteId) localStorage.setItem(ACTIVE_ROUTE_KEY, this.activeRouteId);
+      else localStorage.removeItem(ACTIVE_ROUTE_KEY);
     } catch (e) {
-      console.warn('Could not persist active route ID:', e);
+      console.warn('Aktive Route konnte nicht gespeichert werden:', e);
     }
     return this.getActiveRoute();
   }
 
-  /**
-   * Ändert die Korridor-Breite einer Route (z. B. 1.0 km, 2.5 km, 5.0 km) und speichert sie.
-   */
+  /** Ändert die Korridor-Breite einer Route und speichert sie. */
   updateRouteCorridorRadius(id, newRadiusKm) {
-    const updated = this.routes.map((r) => {
-      if (r.id === id) {
-        return { ...r, corridorRadiusKm: parseFloat(newRadiusKm) || 2.5 };
-      }
-      return r;
-    });
-    this.saveRoutes(updated);
-    return updated;
+    const value = Math.min(10, Math.max(0.5, parseFloat(newRadiusKm) || DEFAULT_CORRIDOR_KM));
+    return this.saveRoutes(this.routes.map((r) => (r.id === id ? { ...r, corridorRadiusKm: value } : r)));
   }
 
   /**
-   * Berechnet eine reale Straßenroute zwischen zwei Punkten über OpenStreetMap OSRM API
+   * Reale Straßenroute zwischen zwei Punkten (OSRM). Fällt bei Ausfall beider Server auf eine
+   * Luftlinie zurück und kennzeichnet das Ergebnis mit approximate: true.
    */
   async calculateOsmRoute(start, end) {
-    if (!start || !end || !start.lat || !end.lat) {
+    if (!start || !end || !Number.isFinite(Number(start.lat)) || !Number.isFinite(Number(end.lat))) {
       throw new Error('Ungültige Start- oder Zielkoordinaten.');
     }
-
-    try {
+    for (const base of OSRM_SERVERS) {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (res.ok) {
+      const timeoutId = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
+      try {
+        const url = `${base}/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) continue;
         const json = await res.json();
-        if (json.code === 'Ok' && json.routes && json.routes.length > 0) {
-          const r = json.routes[0];
-          const coords = r.geometry.coordinates || [];
-          
-          // Mappe Koordinaten [lng, lat] zu { lat, lng }
-          const mappedWaypoints = coords.map((c, idx) => ({
-            lat: c[1],
-            lng: c[0],
-            name: idx === 0 ? (start.name || 'Start') : idx === coords.length - 1 ? (end.name || 'Ziel') : `Segment ${idx}`,
-          }));
-
-          return {
-            success: true,
-            distanceKm: parseFloat((r.distance / 1000).toFixed(1)),
-            durationMin: Math.round(r.duration / 60),
-            waypoints: mappedWaypoints,
-            polylineCoords: coords.map(c => [c[1], c[0]]), // Leaflet LatLng [lat, lng]
-          };
-        }
+        if (json.code !== 'Ok' || !json.routes || json.routes.length === 0) continue;
+        const r = json.routes[0];
+        const coords = (r.geometry?.coordinates || []).map((c) => [c[1], c[0]]);
+        if (coords.length < 2) continue;
+        const polylineCoords = simplifyPolyline(coords);
+        return {
+          success: true,
+          approximate: false,
+          distanceKm: Math.round(r.distance / 100) / 10,
+          durationMin: Math.round(r.duration / 60),
+          waypoints: [
+            { lat: polylineCoords[0][0], lng: polylineCoords[0][1], name: start.name || 'Start' },
+            { lat: polylineCoords[polylineCoords.length - 1][0], lng: polylineCoords[polylineCoords.length - 1][1], name: end.name || 'Ziel' },
+          ],
+          polylineCoords,
+        };
+      } catch (err) {
+        console.warn('Routing-Server nicht erreichbar:', base, err?.name === 'AbortError' ? 'Zeitüberschreitung' : err);
+      } finally {
+        clearTimeout(timeoutId);
       }
-    } catch (err) {
-      console.warn('OSRM routing network notice, using geodesic interpolation:', err);
     }
 
-    // Fallback: Geodätische Interpolation mit 10 Stützpunkten
+    // Fallback: Luftlinie (deutlich gekennzeichnet)
     const directKm = calculateHaversineDistance(start.lat, start.lng, end.lat, end.lng);
-    const steps = 10;
-    const interpolated = [];
+    const steps = Math.max(10, Math.min(200, Math.ceil(directKm / 2)));
+    const polylineCoords = [];
     for (let i = 0; i <= steps; i++) {
       const f = i / steps;
-      interpolated.push({
-        lat: parseFloat((start.lat + (end.lat - start.lat) * f).toFixed(6)),
-        lng: parseFloat((start.lng + (end.lng - start.lng) * f).toFixed(6)),
-        name: i === 0 ? (start.name || 'Start') : i === steps ? (end.name || 'Ziel') : `Stützpunkt ${i}`,
-      });
+      polylineCoords.push([
+        Math.round((start.lat + (end.lat - start.lat) * f) * 1e5) / 1e5,
+        Math.round((start.lng + (end.lng - start.lng) * f) * 1e5) / 1e5,
+      ]);
     }
-
+    const roadKm = Math.round(directKm * 1.25 * 10) / 10;
     return {
       success: true,
-      distanceKm: parseFloat((directKm * 1.25).toFixed(1)), // 25% typischer Straßenfaktor über Luftlinie
-      durationMin: Math.round(((directKm * 1.25) / 50) * 60),
-      waypoints: interpolated,
-      polylineCoords: interpolated.map(p => [p.lat, p.lng]),
+      approximate: true,
+      distanceKm: roadKm,
+      durationMin: Math.round((roadKm / 70) * 60),
+      waypoints: [
+        { lat: start.lat, lng: start.lng, name: start.name || 'Start' },
+        { lat: end.lat, lng: end.lng, name: end.name || 'Ziel' },
+      ],
+      polylineCoords,
     };
   }
 
   async addRoute(routeData) {
-    let waypoints = routeData.waypoints;
-    let totalDistKm = routeData.totalDistanceKm || 0;
-    let polylineCoords = routeData.polylineCoords || [];
+    let polylineCoords = Array.isArray(routeData.polylineCoords) ? routeData.polylineCoords : [];
+    let totalDistKm = Number(routeData.totalDistanceKm) || 0;
+    let durationMin = routeData.durationMin || null;
+    let approximate = !!routeData.approximate;
 
-    // Wenn Start- und Zielkoordinaten übergeben wurden, berechne reale OSRM-Route falls noch nicht vorliegend
-    if (routeData.startCoords && routeData.endCoords && (!polylineCoords || polylineCoords.length < 2)) {
-      try {
-        const osrmResult = await this.calculateOsmRoute(routeData.startCoords, routeData.endCoords);
-        waypoints = osrmResult.waypoints;
-        totalDistKm = osrmResult.distanceKm;
-        polylineCoords = osrmResult.polylineCoords;
-      } catch (e) {
-        console.warn('Error calculating OSRM route:', e);
-      }
+    if (routeData.startCoords && routeData.endCoords && polylineCoords.length < 2) {
+      const osrm = await this.calculateOsmRoute(routeData.startCoords, routeData.endCoords);
+      polylineCoords = osrm.polylineCoords;
+      totalDistKm = osrm.distanceKm;
+      durationMin = osrm.durationMin;
+      approximate = osrm.approximate;
     }
+    if (polylineCoords.length > MAX_STORED_POINTS) polylineCoords = simplifyPolyline(polylineCoords);
 
-    if (!waypoints || waypoints.length === 0) {
-      waypoints = [
-        { lat: routeData.startCoords?.lat || 52.5200, lng: routeData.startCoords?.lng || 13.4050, name: 'Start' },
-        { lat: routeData.endCoords?.lat || 52.5100, lng: routeData.endCoords?.lng || 13.3300, name: 'Ziel' },
-      ];
-    }
+    const first = polylineCoords[0] || [routeData.startCoords?.lat, routeData.startCoords?.lng];
+    const last = polylineCoords[polylineCoords.length - 1] || [routeData.endCoords?.lat, routeData.endCoords?.lng];
+    const startCoords = routeData.startCoords || { lat: first[0], lng: first[1] };
+    const endCoords = routeData.endCoords || { lat: last[0], lng: last[1] };
 
     const newRoute = {
       id: `route-${Date.now()}`,
-      name: routeData.name || 'Neue Fahrt-Route',
+      name: routeData.name || 'Neue Route',
       description: routeData.description || '',
       startName: routeData.startName || 'Start',
-      startCoords: routeData.startCoords || waypoints[0],
+      startCoords,
       endName: routeData.endName || 'Ziel',
-      endCoords: routeData.endCoords || waypoints[waypoints.length - 1],
-      totalDistanceKm: totalDistKm || calculateHaversineDistance(waypoints[0].lat, waypoints[0].lng, waypoints[waypoints.length - 1].lat, waypoints[waypoints.length - 1].lng),
-      corridorRadiusKm: parseFloat(routeData.corridorRadiusKm) || 2.5,
-      waypoints,
+      endCoords,
+      totalDistanceKm: totalDistKm || Math.round(calculateHaversineDistance(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 12.5) / 10,
+      corridorRadiusKm: parseFloat(routeData.corridorRadiusKm) || DEFAULT_CORRIDOR_KM,
+      durationMin,
+      approximate,
+      isTrip: !!routeData.isTrip,
+      createdAt: Date.now(),
+      waypoints: [
+        { lat: startCoords.lat, lng: startCoords.lng, name: routeData.startName || 'Start' },
+        { lat: endCoords.lat, lng: endCoords.lng, name: routeData.endName || 'Ziel' },
+      ],
       polylineCoords,
     };
 
-    const updated = [...this.routes, newRoute];
-    this.saveRoutes(updated);
+    this.saveRoutes([...this.routes, newRoute]);
     this.setActiveRouteId(newRoute.id);
     return newRoute;
   }
 
+  /** Die aktuell geplante Fahrt (temporäre Route aus "Fahrt planen"), falls vorhanden. */
+  getTripRoute() {
+    return this.routes.find((r) => r.isTrip) || null;
+  }
+
+  /** Ersetzt die bisherige Fahrt durch eine neue und aktiviert sie. */
+  async setTripRoute(routeData) {
+    this.saveRoutes(this.routes.filter((r) => !r.isTrip));
+    return this.addRoute({ ...routeData, isTrip: true });
+  }
+
+  /** Beendet die Fahrt: Fahrt-Route entfernen (gespeicherte Routen bleiben). */
+  clearTripRoute() {
+    const trip = this.getTripRoute();
+    if (!trip) return this.routes;
+    return this.deleteRoute(trip.id);
+  }
+
+  /** Name ändern bzw. eine geplante Fahrt dauerhaft als Route behalten. */
+  updateRoute(id, patch = {}) {
+    const allowed = {};
+    if (typeof patch.name === 'string' && patch.name.trim()) allowed.name = patch.name.trim().slice(0, 80);
+    if (patch.isTrip === false) allowed.isTrip = false;
+    if (Object.keys(allowed).length === 0) return this.routes;
+    return this.saveRoutes(this.routes.map((r) => (r.id === id ? { ...r, ...allowed } : r)));
+  }
+
   deleteRoute(id) {
-    const updated = this.routes.filter((r) => r.id !== id);
-    this.saveRoutes(updated);
-    if (this.activeRouteId === id) {
-      this.setActiveRouteId(null);
-    }
+    const updated = this.saveRoutes(this.routes.filter((r) => r.id !== id));
+    if (this.activeRouteId === id) this.setActiveRouteId(null);
     return updated;
   }
 
   /**
-   * Filtert Stationen präzise entlang des Korridors der aktiven Route.
-   * Berechnet den realen Zusatzweg (Abstecher) und die Kilometer-Position auf der Fahrtstrecke!
+   * Stationen im Korridor der Route, in Fahrtrichtung sortiert.
+   * distanceKm = Fahrstrecke ab Routenstart bis zur Station (für Fahrzeit & Ankunftsprognose),
+   * queryDistanceKm = Abstand zum Abfragezentrum (Rohwert von Tankerkönig).
    */
   filterStationsByRoute(stations, route = this.getActiveRoute()) {
-    if (!route || !Array.isArray(stations) || stations.length === 0) return stations || [];
-
-    const allowedCorridor = parseFloat(route.corridorRadiusKm) || 2.5;
-
-    const enriched = stations.map((station) => {
-      // 1. Exakter minimaler Abstand der Tankstelle zur Straßenlinie & km auf der Strecke
+    if (!route || !Array.isArray(stations) || stations.length === 0) return [];
+    const allowedCorridor = parseFloat(route.corridorRadiusKm) || DEFAULT_CORRIDOR_KM;
+    const out = [];
+    for (const station of stations) {
+      if (!Number.isFinite(station.lat) || !Number.isFinite(station.lng)) continue;
       const match = findClosestPointOnRoute(station.lat, station.lng, route);
-
-      // Reale Zusatzkilometer: Abfahren von der Autobahn/Bundesstraße und Wiederauffahren
-      // Mindestens 200m, ansonsten 2x der Querabstand zur Fahrbahn
-      const realAdditionalKm = parseFloat(Math.max(0.2, match.minDistanceKm * 2).toFixed(1));
-
-      // Geschätzte Mehrzeit für den Abstecher (Ampel, Abbiegen, Tankstopp-Zusatzzeit)
-      const detourMinutes = Math.max(1, Math.round((match.minDistanceKm * 2 / 35) * 60 + 1));
-
+      if (match.minDistanceKm > allowedCorridor) continue;
+      // Zusatzweg: abfahren und zurück zur Strecke, mindestens 200 m
+      const realAdditionalKm = Math.round(Math.max(0.2, match.minDistanceKm * 2) * 10) / 10;
+      const detourMinutes = Math.max(1, Math.round(((match.minDistanceKm * 2) / 35) * 60 + 1));
       let routeSegmentLabel = 'Streckenmitte';
       if (match.progressPct < 25) routeSegmentLabel = 'Startphase';
       else if (match.progressPct > 75) routeSegmentLabel = 'Zielnähe';
-
-      const isOnRouteCorridor = match.minDistanceKm <= allowedCorridor;
-
-      return {
+      out.push({
         ...station,
+        queryDistanceKm: station.queryDistanceKm ?? station.distanceKm,
+        distanceKm: Math.round((match.kmAlongRoute + match.minDistanceKm) * 10) / 10,
         routeDetourKm: match.minDistanceKm,
         kmAlongRoute: match.kmAlongRoute,
         progressPct: match.progressPct,
         routeSegmentLabel,
         realAdditionalKm,
         detourMinutes,
-        isOnRouteCorridor,
-      };
-    });
-
-    // Filtere nur Tankstellen, die im definierten Korridor liegen
-    const inCorridor = enriched.filter((s) => s.isOnRouteCorridor);
-
-    // Standard-Sortierung: In Fahrtrichtung (nach Kilometerstand auf der Route)
-    return inCorridor.sort((a, b) => (a.kmAlongRoute || 0) - (b.kmAlongRoute || 0));
+        isOnRouteCorridor: true,
+      });
+    }
+    return out.sort((a, b) => a.kmAlongRoute - b.kmAlongRoute);
   }
 }
 
 export const routeService = new RouteService();
-
